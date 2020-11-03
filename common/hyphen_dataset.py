@@ -12,7 +12,6 @@ class HyphenDataset(Dataset):
         self.file = file
         self.transform = transform
         self.image_paths = []
-        self.images = {}
         self.labels = []
         self.bboxes = []
         max_width, max_height = 0, 0
@@ -39,17 +38,14 @@ class HyphenDataset(Dataset):
         return len(self.image_paths)
 
     def __getitem__(self, index):
-        if index not in self.images:
-            image = Image.open(self.image_paths[index]).convert("RGB")
-            self.images[index] = image
-        else:
-            image = self.images[index]
-        bbox = self.bboxes[index]
-        label = self.labels[index]
+        image = Image.open(self.image_paths[index]).convert("RGB")
         if self.transform:
             image = self.transform(image)
         image = np.array(image)
-        
+
+        bbox = self.bboxes[index]
+        label = self.labels[index]
+
         padded_image = self.padded.copy()
         padded_image[: bbox[3] - bbox[2], : bbox[1] - bbox[0]] = image[
             bbox[2] : bbox[3], bbox[0] : bbox[1]

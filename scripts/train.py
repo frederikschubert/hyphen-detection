@@ -110,12 +110,13 @@ def main():
     trainer = pl.Trainer(
         gpus=-1,
         logger=[logger],
-        callbacks=[
-            callbacks.EarlyStopping(monitor="val_loss"),
-            callbacks.ModelCheckpoint(
-                args.checkpoint_dir, monitor="val_loss", save_top_k=1
-            ),
-        ],
+        callbacks=[callbacks.EarlyStopping(monitor="val_loss")],
+        checkpoint_callback=callbacks.ModelCheckpoint(
+            dirpath=args.checkpoint_dir,
+            filename="hyphen_checkpoint.ckpt",
+            monitor="val_loss",
+            save_top_k=1,
+        ),
         auto_lr_find=False,
         precision=16,
         auto_scale_batch_size=None,
