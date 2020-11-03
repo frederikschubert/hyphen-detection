@@ -11,7 +11,8 @@ class HyphenDataset(Dataset):
     def __init__(self, file: str, transform=None):
         self.file = file
         self.transform = transform
-        self.images = []
+        self.image_paths = []
+        self.images = {}
         self.labels = []
         self.bboxes = []
         max_width, max_height = 0, 0
@@ -19,7 +20,7 @@ class HyphenDataset(Dataset):
             reader = csv.DictReader(csvfile)
             logger.info("Reading annotations...")
             for row in tqdm(reader):
-                self.images.append(row["image_path"])
+                self.image_paths.append(row["image_path"])
                 self.labels.append(int(row["label"]))
                 bbox = [
                     int(row["bbox_min_x"]),
@@ -35,15 +36,20 @@ class HyphenDataset(Dataset):
         self.padded = np.zeros(shape=[max_height, max_width, 3], dtype=np.float32)
 
     def __len__(self):
-        return len(self.images)
+        return len(self.image_paths)
 
     def __getitem__(self, index):
-        image = Image.open(self.images[index]).convert("RGB")
+        if index not in self.images:
+            image = Image.open(self.image_paths[index]).convert("RGB")
+            self.images[index] = image
+        else:
+            image = self.images[index]
         bbox = self.bboxes[index]
         label = self.labels[index]
         if self.transform:
             image = self.transform(image)
         image = np.array(image)
+        
         padded_image = self.padded.copy()
         padded_image[: bbox[3] - bbox[2], : bbox[1] - bbox[0]] = image[
             bbox[2] : bbox[3], bbox[0] : bbox[1]
