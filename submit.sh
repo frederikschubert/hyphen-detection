@@ -6,7 +6,7 @@
 #SBATCH --time=7-0
 #SBATCH --output=/home/schubert/projects/hyphen/nobackup/slurm_logs/%x-%j.slurm.log
 #SBATCH --export=ALL
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=24
 #SBATCH --mem-per-cpu=4G
 #SBATCH --gpus=1
 

@@ -1,21 +1,42 @@
 import csv
+import os
+from typing import Literal
+
 import numpy as np
-from torch.utils.data import Dataset
+from loguru import logger
 from PIL import Image
+from torch.utils.data import Dataset
+from torchvision.transforms.transforms import (
+    Compose,
+    Normalize,
+    RandomRotation,
+    ToTensor,
+)
 from tqdm import tqdm
 
-from loguru import logger
+transform = Compose(
+    [
+        ToTensor(),
+        Normalize([4.9835, 5.9437, 5.4343], [22.4497, 26.7665, 24.4718]),
+        RandomRotation(180),
+    ]
+)
 
 
 class HyphenDataset(Dataset):
-    def __init__(self, file: str, transform=None):
-        self.file = file
+    def __init__(
+        self,
+        path: str,
+        split: Literal["train", "val"] = "train",
+        transform=transform,
+    ):
+        self.file = os.path.join(path, split, "annotations.csv")
         self.transform = transform
         self.image_paths = []
         self.labels = []
         self.bboxes = []
         max_width, max_height = 0, 0
-        with open(self.file, newline="") as csvfile:
+        with open(self.file, "r", newline="") as csvfile:
             reader = csv.DictReader(csvfile)
             logger.info("Reading annotations...")
             for row in tqdm(reader):
@@ -32,7 +53,16 @@ class HyphenDataset(Dataset):
                 height = bbox[3] - bbox[2]
                 max_width = width if width > max_width else max_width
                 max_height = height if height > max_height else max_height
-        self.padded = np.zeros(shape=[max_height, max_width, 3], dtype=np.float32)
+        self.labels = np.array(self.labels)
+        class_sample_counts = np.unique(self.labels, return_counts=True)[1]
+        logger.info("Found the following class counts {}", class_sample_counts)
+        self.weights = np.where(
+            self.labels == 0,
+            np.ones_like(self.labels, dtype=np.float32) / class_sample_counts[0],
+            np.ones_like(self.labels, dtype=np.float32) / class_sample_counts[1],
+        )
+        self.padded = np.zeros(shape=[3, max_height, max_width], dtype=np.float32)
+        logger.info("Loaded dataset")
 
     def __len__(self):
         return len(self.image_paths)
@@ -47,8 +77,7 @@ class HyphenDataset(Dataset):
         label = self.labels[index]
 
         padded_image = self.padded.copy()
-        padded_image[: bbox[3] - bbox[2], : bbox[1] - bbox[0]] = image[
-            bbox[2] : bbox[3], bbox[0] : bbox[1]
+        padded_image[:, : bbox[3] - bbox[2], : bbox[1] - bbox[0]] = image[
+            :, bbox[2] : bbox[3], bbox[0] : bbox[1]
         ]
-        padded_image = np.transpose(padded_image, [-1, -2, 0])
         return padded_image, label

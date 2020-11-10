@@ -1,6 +1,7 @@
 import os
 import csv
 import shutil
+import random
 from pathlib import Path, PosixPath
 from xml.dom import minidom
 
@@ -41,6 +42,7 @@ class Arguments(Tap):
     output_dir: str = "nobackup/dataset"
     debug: bool = False
     num_samples: int = 2
+    val_split: float = 0.2
 
 
 def extract_points_and_images(file: PosixPath):
@@ -121,50 +123,67 @@ def main():
     logger.info("Extracted {} images", len(images))
     if os.path.exists(args.output_dir):
         shutil.rmtree(args.output_dir)
-    os.makedirs(args.output_dir)
+    train_output_dir = os.path.join(args.output_dir, "train")
+    os.makedirs(train_output_dir)
+    val_output_dir = os.path.join(args.output_dir, "val")
+    os.makedirs(val_output_dir, exist_ok=True)
     logger.info("Writing cropped images, bboxes and labels...")
+    fieldnames = [
+        "image_path",
+        "label",
+        "bbox_min_x",
+        "bbox_max_x",
+        "bbox_min_y",
+        "bbox_max_y",
+    ]
     with open(
-        os.path.join(args.output_dir, "annotations.csv"), "w", newline=""
-    ) as csvfile:
-        fieldnames = [
-            "image_path",
-            "label",
-            "bbox_min_x",
-            "bbox_max_x",
-            "bbox_min_y",
-            "bbox_max_y",
-        ]
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        for input_path, img, bboxes, labels, p in tqdm(
-            zip(svg_files, images, bbox_lists, label_lists, points), total=len(images)
-        ):
-            output_path_image = str(input_path).replace(args.input_dir, args.output_dir)
-            output_path_image = output_path_image.replace(".svg", ".png")
-            os.makedirs(os.path.dirname(output_path_image), exist_ok=True)
-            logger.trace("Writing image to {}", output_path_image)
-            plt.imsave(output_path_image, img)
+        os.path.join(train_output_dir, "annotations.csv"), "w", newline=""
+    ) as train_csv:
+        train_writer = csv.DictWriter(train_csv, fieldnames=fieldnames)
+        train_writer.writeheader()
+        with open(
+            os.path.join(val_output_dir, "annotations.csv"), "w", newline=""
+        ) as val_csv:
+            val_writer = csv.DictWriter(val_csv, fieldnames=fieldnames)
+            val_writer.writeheader()
+            for input_path, img, bboxes, labels, p in tqdm(
+                zip(svg_files, images, bbox_lists, label_lists, points),
+                total=len(images),
+            ):
+                is_val = random.random() < args.val_split
+                output_dir = val_output_dir if is_val else train_output_dir
+                writer = val_writer if is_val else train_writer
 
-            for bbox, label in zip(bboxes, labels):
-                writer.writerow(
-                    {
-                        "image_path": output_path_image,
-                        "label": label,
-                        "bbox_min_x": bbox[0],
-                        "bbox_max_x": bbox[1],
-                        "bbox_min_y": bbox[2],
-                        "bbox_max_y": bbox[3],
-                    }
-                )
-            if args.debug:
-                output_path_points = output_path_image.replace(".png", "_points.png")
-                logger.trace("Writing points to {}", output_path_points)
-                plt.imsave(output_path_points, p)
-                combination_mask = np.expand_dims(p[:, :, -1] != 0, -1)
-                output_path_combination = output_path_points.replace(
-                    "_points.png", "combination.png"
-                )
-                plt.imsave(output_path_combination, np.where(combination_mask, p, img))
+                output_path_image = str(input_path).replace(args.input_dir, output_dir)
+                output_path_image = output_path_image.replace(".svg", ".png")
+                os.makedirs(os.path.dirname(output_path_image), exist_ok=True)
+                logger.trace("Writing image to {}", output_path_image)
+                plt.imsave(output_path_image, img)
+
+                for bbox, label in zip(bboxes, labels):
+                    writer.writerow(
+                        {
+                            "image_path": output_path_image,
+                            "label": label,
+                            "bbox_min_x": bbox[0],
+                            "bbox_max_x": bbox[1],
+                            "bbox_min_y": bbox[2],
+                            "bbox_max_y": bbox[3],
+                        }
+                    )
+                if args.debug:
+                    output_path_points = output_path_image.replace(
+                        ".png", "_points.png"
+                    )
+                    logger.trace("Writing points to {}", output_path_points)
+                    plt.imsave(output_path_points, p)
+                    combination_mask = np.expand_dims(p[:, :, -1] != 0, -1)
+                    output_path_combination = output_path_points.replace(
+                        "_points.png", "combination.png"
+                    )
+                    plt.imsave(
+                        output_path_combination, np.where(combination_mask, p, img)
+                    )
 
 
 if __name__ == "__main__":
