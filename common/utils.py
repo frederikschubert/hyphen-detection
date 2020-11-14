@@ -49,28 +49,30 @@ def imap_progress(f, iterable: List, flatten=False):
 def visualize_predictions(
     model: nn.Module,
     image_path: str,
-    num_points_x: int = 20,
-    num_points_y: int = 17,
+    bboxes: List[Tuple[int, int, int, int]],
+    patch_size: int,
+    threshold: float = 0.8,
     circle_radius: int = 4,
     circle_color: Tuple[int, int, int] = (240, 240, 240),
     circle_thickness: int = 1,
-    patch_size: int=40,
 ):
     image = Image.open(image_path).convert("RGB")
     image_patches = []
-    bboxes, centers = get_bboxes_and_centers(
-        image.height, image.width, num_points_x, num_points_y
-    )
+    centers: List[Tuple[int, int]] = []
     for bbox in bboxes:
         padded_image = torch.zeros(3, patch_size, patch_size)
-        padded_image[:, : bbox[3] - bbox[2], : bbox[1] - bbox[0]] = transform(image)[
-            :, bbox[2] : bbox[3], bbox[0] : bbox[1]
+        min_x, max_x, min_y, max_y = bbox
+        padded_image[:, : max_y - min_y, : max_x - min_x] = transform(image)[
+            :, min_y:max_y, min_x:max_x
         ]
+        centers.append(
+            (int(min_x + (max_x - min_x) / 2), int(min_y + (max_y - min_y) / 2))
+        )
         image_patches.append(padded_image)
     image_patches = torch.stack(image_patches)
     image_patches = image_patches.to(model.device)
     with torch.no_grad():
-        predictions = model(image_patches).cpu().numpy()
+        predictions = torch.sigmoid(model(image_patches)).cpu().numpy()
     for center, prediction in zip(centers, predictions):
         image = np.array(image)
         image = cv2.circle(
@@ -80,7 +82,7 @@ def visualize_predictions(
             circle_color,
             circle_thickness,
         )
-        if prediction[1] > prediction[0]:
+        if prediction[1] > threshold:
             image = cv2.circle(
                 image,
                 center,
@@ -89,21 +91,3 @@ def visualize_predictions(
                 -1,
             )
     return image
-
-
-def get_bboxes_and_centers(
-    height: int, width: int, num_points_x: int, num_points_y: int
-):
-    bboxes = []
-    centers = []
-    min_xs = np.round(np.linspace(0, width, num_points_x, endpoint=False))
-    min_ys = np.round(np.linspace(0, height, num_points_y, endpoint=False))
-    for i, min_x in enumerate(min_xs):
-        for j, min_y in enumerate(min_ys):
-            max_x = min_xs[i + 1] if i < len(min_xs) - 1 else width
-            max_y = min_ys[j + 1] if j < len(min_ys) - 1 else height
-            center_x = int(min_x + (max_x - min_x) / 2)
-            center_y = int(min_y + (max_y - min_y) / 2)
-            centers.append((center_x, center_y))
-            bboxes.append((int(min_x), int(max_x), int(min_y), int(max_y)))
-    return bboxes, centers

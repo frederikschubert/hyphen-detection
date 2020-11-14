@@ -2,7 +2,7 @@ import torch
 from torch.utils.data.sampler import WeightedRandomSampler
 from common.utils import visualize_predictions
 import os
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from loguru import logger
 import random
 
@@ -22,6 +22,7 @@ from torch.utils.data.dataloader import DataLoader
 
 
 class Arguments(Tap):
+    name: Optional[str] = None
     project: str = "hyphen"
     tags: List[str] = []
     dataset: str = "./nobackup/dataset/"
@@ -30,6 +31,7 @@ class Arguments(Tap):
     batch_size: int = 256
     learning_rate: float = 1e-3
     debug: bool = False
+    balance_dataset: bool = False
 
     def process_args(self):
         if self.debug:
@@ -56,27 +58,42 @@ class HyphenDetection(pl.LightningModule):
         logits = self.forward(images)
         loss = nn.BCEWithLogitsLoss()(logits, F.one_hot(labels, num_classes=2).float())
         self.log_dict({"loss": loss})
+        if batch_idx % 100 == 0:
+            image_paths = random.choices(self.val_dataset.image_paths, k=4)
+            for i, image_path in enumerate(image_paths):
+                image = visualize_predictions(
+                    self,
+                    image_path,
+                    bboxes=self.val_dataset.get_bboxes_for_image(image_path),
+                    patch_size=max(self.train_dataset.padded.shape),
+                )
+                wandb.log(
+                    {f"sample_{i}": wandb.Image(image, caption=image_path)},
+                    commit=False,
+                )
         return {"loss": loss}
 
     def validation_step(self, batch, batch_idx):
         images, labels = batch
         logits = self.forward(images)
-        loss = nn.BCEWithLogitsLoss()(logits, F.one_hot(labels, num_classes=2).float())
         predictions = logits.argmax(dim=-1)
+        return predictions, labels
+
+    def validation_epoch_end(
+        self, validation_step_outputs: List[Tuple[torch.Tensor, torch.Tensor]]
+    ):
+        predictions, labels = [], []
+        for p, l in validation_step_outputs:
+            predictions.append(p)
+            labels.append(l)
+        predictions = torch.cat(predictions)
+        labels = torch.cat(labels)
         accuracy = metrics.accuracy(predictions, labels, num_classes=2)
-        if batch_idx == 0:
-            image = visualize_predictions(
-                self,
-                random.choice(self.val_dataset.image_paths),
-                patch_size=max(self.train_dataset.padded.shape),
-            )
-            wandb.log({"sample": wandb.Image(image)})
-            wandb.log(
-                {"conf_mat": wandb.plot.confusion_matrix(predictions, labels, [0, 1])}
-            )
-        log = {"val_loss": loss, "accuracy": accuracy}
-        self.log_dict(log)
-        return log
+        wandb.log(
+            {"conf_mat": wandb.plot.confusion_matrix(predictions, labels, [0, 1])},
+            commit=False,
+        )
+        self.log_dict({"accuracy": accuracy})
 
     def train_dataloader(self):
         return DataLoader(
@@ -85,7 +102,9 @@ class HyphenDetection(pl.LightningModule):
             num_workers=os.cpu_count() or 1,
             sampler=WeightedRandomSampler(
                 self.train_dataset.weights, len(self.train_dataset)
-            ),
+            )
+            if self.hparams.balance_dataset
+            else None,
         )
 
     def val_dataloader(self):
@@ -98,14 +117,17 @@ class HyphenDetection(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = optim.Adam(self.model.parameters(), lr=self.hparams.learning_rate)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer)
-        return [optimizer], [{"scheduler": scheduler, "monitor": "val_loss"}]
+        return [optimizer], [{"scheduler": scheduler, "monitor": "accuracy"}]
 
 
 def main():
     args = Arguments().parse_args()
     model = HyphenDetection(args.as_dict())
     run = wandb.init(
-        project=args.project, tags=args.tags, config=args.as_dict(), job_type="train"
+        project=args.project,
+        tags=args.tags,
+        job_type="train",
+        name=args.name,
     )
     logger = loggers.WandbLogger(experiment=run)
     trainer = pl.Trainer(
@@ -114,9 +136,10 @@ def main():
         checkpoint_callback=callbacks.ModelCheckpoint(
             dirpath=os.path.join(run.dir, "checkpoints"),
             filename="hyphen_checkpoint.ckpt",
-            monitor="val_loss",
+            monitor="accuracy",
             save_top_k=1,
         ),
+        callbacks=[callbacks.LearningRateMonitor(logging_interval="step")],
         auto_lr_find=False,
         auto_scale_batch_size=None,
         fast_dev_run=args.debug,

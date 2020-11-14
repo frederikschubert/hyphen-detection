@@ -64,6 +64,13 @@ class HyphenDataset(Dataset):
         self.padded = np.zeros(shape=[3, max_height, max_width], dtype=np.float32)
         logger.info("Loaded dataset")
 
+    def get_bboxes_for_image(self, query_image_path: str):
+        return [
+            bbox
+            for bbox, image_path in zip(self.bboxes, self.image_paths)
+            if query_image_path in image_path
+        ]
+
     def __len__(self):
         return len(self.image_paths)
 
@@ -77,7 +84,8 @@ class HyphenDataset(Dataset):
         label = self.labels[index]
 
         padded_image = self.padded.copy()
-        padded_image[:, : bbox[3] - bbox[2], : bbox[1] - bbox[0]] = image[
-            :, bbox[2] : bbox[3], bbox[0] : bbox[1]
+        min_x, max_x, min_y, max_y = bbox
+        padded_image[:, : max_y - min_y, : max_x - min_x] = image[
+            :, min_y:max_y, min_x:max_x
         ]
         return padded_image, label
