@@ -1,16 +1,42 @@
-from itertools import product
 import multiprocessing as mp
 import os
 from typing import List, Tuple
-from PIL import Image
-import cv2
 
+import cv2
 import numpy as np
-from torch import nn
 import torch
+from PIL import Image
+from torch import nn
 from torch.utils.data.dataloader import DataLoader
+from torchvision.transforms.transforms import (
+    Compose,
+    Normalize,
+    RandomHorizontalFlip,
+    RandomRotation,
+    RandomVerticalFlip,
+    ToTensor,
+)
 from tqdm import tqdm
-from .hyphen_dataset import transform
+
+transform = Compose(
+    [
+        ToTensor(),
+        Normalize([4.9835, 5.9437, 5.4343], [22.4497, 26.7665, 24.4718]),
+    ]
+)
+
+transform_positive = Compose(
+    [
+        ToTensor(),
+        Normalize([4.9835, 5.9437, 5.4343], [22.4497, 26.7665, 24.4718]),
+        RandomRotation(180),
+        RandomHorizontalFlip(),
+    ]
+)
+
+transform_test = Compose(
+    [ToTensor(), Normalize([4.9835, 5.9437, 5.4343], [22.4497, 26.7665, 24.4718])]
+)
 
 
 def compute_mean_std(dataset, device):
@@ -46,35 +72,54 @@ def imap_progress(f, iterable: List, flatten=False):
     return results
 
 
+def pad_image(image, patch_size: int):
+    half_patch_size = patch_size // 2
+    image_padded = np.pad(
+        image,
+        [
+            (half_patch_size, half_patch_size),
+            (half_patch_size, half_patch_size),
+            (0, 0),
+        ],
+    )
+    return image_padded
+
+
+def crop_patch(padded_image, center: Tuple[int, int], patch_size: int):
+    x, y = center
+    patch = padded_image[
+        y : y + patch_size,
+        x : x + patch_size,
+        :,
+    ]
+    return patch
+
+
 def visualize_predictions(
     model: nn.Module,
     image_path: str,
-    bboxes: List[Tuple[int, int, int, int]],
+    centers: List[Tuple[int, int]],
     patch_size: int,
-    threshold: float = 0.8,
+    labels: List[int] = [],
     circle_radius: int = 4,
     circle_color: Tuple[int, int, int] = (240, 240, 240),
     circle_thickness: int = 1,
 ):
     image = Image.open(image_path).convert("RGB")
+    image = np.array(image)
+    padded_image = pad_image(image, patch_size)
     image_patches = []
-    centers: List[Tuple[int, int]] = []
-    for bbox in bboxes:
-        padded_image = torch.zeros(3, patch_size, patch_size)
-        min_x, max_x, min_y, max_y = bbox
-        padded_image[:, : max_y - min_y, : max_x - min_x] = transform(image)[
-            :, min_y:max_y, min_x:max_x
-        ]
-        centers.append(
-            (int(min_x + (max_x - min_x) / 2), int(min_y + (max_y - min_y) / 2))
-        )
-        image_patches.append(padded_image)
+    for center in centers:
+        padded_patch = crop_patch(padded_image, center, patch_size)
+        padded_patch = transform_test(padded_patch)
+        image_patches.append(padded_patch)
     image_patches = torch.stack(image_patches)
     image_patches = image_patches.to(model.device)
     with torch.no_grad():
-        predictions = torch.sigmoid(model(image_patches)).cpu().numpy()
-    for center, prediction in zip(centers, predictions):
-        image = np.array(image)
+        predictions = torch.softmax(model(image_patches), dim=-1).cpu().numpy()
+    if not labels:
+        labels = [-1] * len(centers)
+    for center, prediction, label in zip(centers, predictions, labels):
         image = cv2.circle(
             image,
             center,
@@ -82,7 +127,10 @@ def visualize_predictions(
             circle_color,
             circle_thickness,
         )
-        if prediction[1] > threshold:
+        positive = prediction[1] > prediction[0]
+        true_positive = positive and label == 1
+        false_negative = not positive and label == 1
+        if positive:
             image = cv2.circle(
                 image,
                 center,
@@ -90,4 +138,21 @@ def visualize_predictions(
                 (255, 0, 0),
                 -1,
             )
+        if true_positive:
+            image = cv2.circle(
+                image,
+                center,
+                circle_radius,
+                (0, 255, 0),
+                circle_thickness,
+            )
+        if false_negative:
+            image = cv2.circle(
+                image,
+                center,
+                circle_radius,
+                (255, 0, 0),
+                circle_thickness,
+            )
+
     return image

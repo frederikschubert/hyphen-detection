@@ -1,24 +1,26 @@
-import torch
-from torch.utils.data.sampler import WeightedRandomSampler
-from common.utils import visualize_predictions
 import os
-from typing import List, Optional, Tuple
-from loguru import logger
 import random
+from typing import List, Optional, Tuple
 
 import pytorch_lightning as pl
 import pytorch_lightning.callbacks as callbacks
 import pytorch_lightning.loggers as loggers
 import pytorch_lightning.metrics.functional.classification as metrics
 import timm
-import wandb
+import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
-from common.hyphen_dataset import HyphenDataset
+import torch.optim as optim
+import wandb
+from loguru import logger
+from sklearn.metrics import matthews_corrcoef
 from tap import Tap
 from torch import optim
 from torch.utils.data.dataloader import DataLoader
+from torch.utils.data.sampler import WeightedRandomSampler
+
+from common.hyphen_dataset import HyphenDataset
+from common.utils import visualize_predictions
 
 
 class Arguments(Tap):
@@ -26,29 +28,43 @@ class Arguments(Tap):
     project: str = "hyphen"
     tags: List[str] = []
     dataset: str = "./nobackup/dataset/"
-    model_name: str = "efficientnet_b0"
+    model_name: str = "efficientnet_b3"
     model_checkpoint: Optional[str] = None
     batch_size: int = 256
     learning_rate: float = 1e-3
     debug: bool = False
     balance_dataset: bool = False
+    pretrained: bool = False
+    fp16: bool = False
+    accumulate_grad_batches: int = 1
+    target_metric: str = "matthews_corrcoef"
+    patch_size: int = 80
 
     def process_args(self):
         if self.debug:
             self.batch_size = 16
+        if self.fp16:
+            self.batch_size *= 2
 
 
 class HyphenDetection(pl.LightningModule):
     def __init__(self, hparams):
         super().__init__()
         self.hparams: Arguments = hparams
-        self.save_hyperparameters()
 
         self.model = timm.create_model(
-            self.hparams.model_name, num_classes=2, scriptable=True
+            self.hparams.model_name,
+            pretrained=self.hparams.pretrained,
+            num_classes=2,
+            scriptable=True,
         )
-        self.train_dataset = HyphenDataset(self.hparams.dataset)
-        self.val_dataset = HyphenDataset(self.hparams.dataset, split="val")
+        self.train_dataset = HyphenDataset(
+            self.hparams.dataset, patch_size=self.hparams.patch_size
+        )
+        self.val_dataset = HyphenDataset(
+            self.hparams.dataset, split="val", patch_size=self.hparams.patch_size
+        )
+        self.loss = nn.CrossEntropyLoss()
 
     def forward(self, images) -> torch.Tensor:
         return self.model(images)
@@ -56,7 +72,7 @@ class HyphenDetection(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         images, labels = batch
         logits = self.forward(images)
-        loss = nn.BCEWithLogitsLoss()(logits, F.one_hot(labels, num_classes=2).float())
+        loss = self.loss(logits, labels)
         self.log_dict({"loss": loss})
         if batch_idx % 100 == 0:
             image_paths = random.choices(self.val_dataset.image_paths, k=4)
@@ -64,8 +80,9 @@ class HyphenDetection(pl.LightningModule):
                 image = visualize_predictions(
                     self,
                     image_path,
-                    bboxes=self.val_dataset.get_bboxes_for_image(image_path),
-                    patch_size=max(self.train_dataset.padded.shape),
+                    centers=self.val_dataset.get_centers_for_image(image_path),
+                    labels=self.val_dataset.get_labels_for_image(image_path),
+                    patch_size=self.hparams.patch_size,
                 )
                 wandb.log(
                     {f"sample_{i}": wandb.Image(image, caption=image_path)},
@@ -76,6 +93,10 @@ class HyphenDetection(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         images, labels = batch
         logits = self.forward(images)
+        loss = self.loss(logits, labels)
+        self.log("val_loss", loss)
+        f1 = metrics.f1_score(logits, labels, 2)
+        self.log("f1", f1)
         predictions = logits.argmax(dim=-1)
         return predictions, labels
 
@@ -89,11 +110,13 @@ class HyphenDetection(pl.LightningModule):
         predictions = torch.cat(predictions)
         labels = torch.cat(labels)
         accuracy = metrics.accuracy(predictions, labels, num_classes=2)
+        mcc = matthews_corrcoef(labels.cpu().numpy(), predictions.cpu().numpy())
         wandb.log(
             {"conf_mat": wandb.plot.confusion_matrix(predictions, labels, [0, 1])},
             commit=False,
         )
-        self.log_dict({"accuracy": accuracy})
+        self.log("accuracy", accuracy)
+        self.log("matthews_corrcoef", mcc)
 
     def train_dataloader(self):
         return DataLoader(
@@ -117,7 +140,9 @@ class HyphenDetection(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = optim.Adam(self.model.parameters(), lr=self.hparams.learning_rate)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer)
-        return [optimizer], [{"scheduler": scheduler, "monitor": "accuracy"}]
+        return [optimizer], [
+            {"scheduler": scheduler, "monitor": self.hparams.target_metric}
+        ]
 
 
 def main():
@@ -136,13 +161,15 @@ def main():
         checkpoint_callback=callbacks.ModelCheckpoint(
             dirpath=os.path.join(run.dir, "checkpoints"),
             filename="hyphen_checkpoint.ckpt",
-            monitor="accuracy",
+            monitor=args.target_metric,
             save_top_k=1,
         ),
         callbacks=[callbacks.LearningRateMonitor(logging_interval="step")],
         auto_lr_find=False,
         auto_scale_batch_size=None,
         fast_dev_run=args.debug,
+        precision=16 if args.fp16 else 32,
+        accumulate_grad_batches=args.accumulate_grad_batches,
     )
     trainer.tune(model)
     trainer.fit(model)
