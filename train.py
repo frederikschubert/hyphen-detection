@@ -1,3 +1,5 @@
+from common.partially_huberised_cross_entropy import PartiallyHuberisedCrossEntropyLoss
+from common.distributed_proxy_sampler import DistributedProxySampler
 import os
 import random
 from typing import List, Optional, Tuple
@@ -11,6 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torchvision.utils import make_grid
 import wandb
 from loguru import logger
 from sklearn.metrics import matthews_corrcoef
@@ -43,8 +46,6 @@ class Arguments(Tap):
     def process_args(self):
         if self.debug:
             self.batch_size = 16
-        if self.fp16:
-            self.batch_size *= 2
 
 
 class HyphenDetection(pl.LightningModule):
@@ -64,13 +65,17 @@ class HyphenDetection(pl.LightningModule):
         self.val_dataset = HyphenDataset(
             self.hparams.dataset, split="val", patch_size=self.hparams.patch_size
         )
-        self.loss = nn.CrossEntropyLoss()
+        self.loss = PartiallyHuberisedCrossEntropyLoss()
 
     def forward(self, images) -> torch.Tensor:
         return self.model(images)
 
     def training_step(self, batch, batch_idx):
         images, labels = batch
+        if batch_idx == 0:
+            wandb.log(
+                {"sample_input_batch": wandb.Image(make_grid(images))}, commit=False
+            )
         logits = self.forward(images)
         loss = self.loss(logits, labels)
         self.log_dict({"loss": loss})
@@ -128,6 +133,8 @@ class HyphenDetection(pl.LightningModule):
             )
             if self.hparams.balance_dataset
             else None,
+            shuffle=False if self.hparams.balance_dataset else True,
+            pin_memory=True,
         )
 
     def val_dataloader(self):
@@ -135,6 +142,7 @@ class HyphenDetection(pl.LightningModule):
             self.val_dataset,
             batch_size=self.hparams.batch_size,
             num_workers=os.cpu_count() or 1,
+            pin_memory=True,
         )
 
     def configure_optimizers(self):

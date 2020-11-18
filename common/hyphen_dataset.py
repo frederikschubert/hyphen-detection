@@ -12,7 +12,6 @@ from common.utils import (
     crop_patch,
     pad_image,
     transform,
-    transform_positive,
 )
 
 
@@ -77,8 +76,5 @@ class HyphenDataset(Dataset):
         center = self.centers[index]
         label = self.labels[index]
         patch = crop_patch(padded_image, center, self.patch_size)
-        if label == 1:
-            patch = transform_positive(patch)
-        else:
-            patch = transform(patch)
+        patch = transform(patch)
         return patch, label

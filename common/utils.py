@@ -10,10 +10,8 @@ from torch import nn
 from torch.utils.data.dataloader import DataLoader
 from torchvision.transforms.transforms import (
     Compose,
-    Normalize,
     RandomHorizontalFlip,
     RandomRotation,
-    RandomVerticalFlip,
     ToTensor,
 )
 from tqdm import tqdm
@@ -21,22 +19,12 @@ from tqdm import tqdm
 transform = Compose(
     [
         ToTensor(),
-        Normalize([4.9835, 5.9437, 5.4343], [22.4497, 26.7665, 24.4718]),
-    ]
-)
-
-transform_positive = Compose(
-    [
-        ToTensor(),
-        Normalize([4.9835, 5.9437, 5.4343], [22.4497, 26.7665, 24.4718]),
         RandomRotation(180),
         RandomHorizontalFlip(),
     ]
 )
 
-transform_test = Compose(
-    [ToTensor(), Normalize([4.9835, 5.9437, 5.4343], [22.4497, 26.7665, 24.4718])]
-)
+test_transform = Compose([ToTensor()])
 
 
 def compute_mean_std(dataset, device):
@@ -110,13 +98,12 @@ def visualize_predictions(
     padded_image = pad_image(image, patch_size)
     image_patches = []
     for center in centers:
-        padded_patch = crop_patch(padded_image, center, patch_size)
-        padded_patch = transform_test(padded_patch)
+        padded_patch = test_transform(crop_patch(padded_image, center, patch_size))
         image_patches.append(padded_patch)
     image_patches = torch.stack(image_patches)
     image_patches = image_patches.to(model.device)
     with torch.no_grad():
-        predictions = torch.softmax(model(image_patches), dim=-1).cpu().numpy()
+        predictions = model(image_patches).argmax(dim=-1).cpu().numpy()
     if not labels:
         labels = [-1] * len(centers)
     for center, prediction, label in zip(centers, predictions, labels):
@@ -127,10 +114,9 @@ def visualize_predictions(
             circle_color,
             circle_thickness,
         )
-        positive = prediction[1] > prediction[0]
-        true_positive = positive and label == 1
-        false_negative = not positive and label == 1
-        if positive:
+        true_positive = prediction == 1 and label == 1
+        false_negative = prediction == 0 and label == 1
+        if prediction == 1:
             image = cv2.circle(
                 image,
                 center,
