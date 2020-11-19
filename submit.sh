@@ -8,7 +8,7 @@
 #SBATCH --export=ALL
 #SBATCH --cpus-per-task=24
 #SBATCH --mem-per-cpu=4G
-#SBATCH --gpus=1
+#SBATCH --gpus=4
 
 
 cd /home/schubert/projects/hyphen
