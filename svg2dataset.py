@@ -145,6 +145,9 @@ def main():
         "x",
         "y",
     ]
+    removed_from_val_percentage = len(
+        [input_path for input_path in svg_files if "Asendorf" in str(input_path)]
+    ) / len(svg_files)
     with open(
         os.path.join(train_output_dir, "annotations.csv"), "w", newline=""
     ) as train_csv:
@@ -159,7 +162,11 @@ def main():
                 zip(svg_files, images, center_lists, label_lists),
                 total=len(images),
             ):
-                is_val = random.random() < args.val_split
+                is_val = (
+                    "Asendorf" not in str(input_path)
+                    and random.random()
+                    < args.val_split + removed_from_val_percentage * args.val_split
+                )
                 output_dir = val_output_dir if is_val else train_output_dir
                 writer = val_writer if is_val else train_writer
 

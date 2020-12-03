@@ -1,58 +1,56 @@
-import numpy as np
-import tempfile
-from numpy.core.arrayprint import array2string
-from common.confusion_matrix import confusion_matrix
-from common.partially_huberised_cross_entropy import PartiallyHuberisedCrossEntropyLoss
-from common.distributed_proxy_sampler import DistributedProxySampler
+from common.one_cycle_lr import OneCycleLR
 import os
 import random
-from typing import Any, Dict, List, Optional, Tuple
+import tempfile
+import math
+from typing import List, Optional, Tuple
+from loguru import logger
 
+import numpy as np
 import pytorch_lightning as pl
 import pytorch_lightning.callbacks as callbacks
 import pytorch_lightning.loggers as loggers
 import pytorch_lightning.metrics.functional.classification as metrics
 import timm
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from torchvision.utils import make_grid
 import wandb
-from loguru import logger
 from sklearn.metrics import matthews_corrcoef
 from tap import Tap
-from torch import optim
+from torch.nn.modules.loss import CrossEntropyLoss
+from torch.optim.adam import Adam
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import WeightedRandomSampler
+from torchvision.utils import make_grid
 
+from common.confusion_matrix import confusion_matrix
+from common.distributed_proxy_sampler import DistributedProxySampler
 from common.hyphen_dataset import HyphenDataset
-from common.utils import visualize_predictions
+from common.partially_huberised_cross_entropy import PartiallyHuberisedCrossEntropyLoss
+from common.utils import compute_mean_std, visualize_predictions
 
 
 class Arguments(Tap):
     name: Optional[str] = None
     project: str = "hyphen"
     tags: List[str] = []
-    dataset: str = "./nobackup/dataset/"
+    dataset: str = "./nobackup/dataset_3/"
     model_name: str = "efficientnet_b3"
     model_checkpoint: Optional[str] = None
-    epochs: int = 20
-    batch_size: int = 256
+    epochs: int = 60
+    batch_size: int = 16
     learning_rate: float = 1e-3
+    weight_decay: float = 1e-5
     debug: bool = False
     balance_dataset: bool = False
     pretrained: bool = False
     fp16: bool = False
     accumulate_grad_batches: int = 1
-    target_metric: str = "matthews_corrcoef"
-    patch_size: int = 80
-    tau: float = 5.0
+    target_metric: str = "val_matthews_corrcoef"
+    patch_size: int = 260
+    tau: float = 10.0
     num_samples: int = 4
-
-    def process_args(self):
-        if self.debug:
-            self.batch_size = 16
+    assume_label_noise: bool = False
+    unbiased_sampling_epochs: int = 0
 
 
 class HyphenDetection(pl.LightningModule):
@@ -64,7 +62,7 @@ class HyphenDetection(pl.LightningModule):
             self.hparams.model_name,
             pretrained=self.hparams.pretrained,
             num_classes=2,
-            scriptable=True,
+            in_chans=4,
         )
         self.train_dataset = HyphenDataset(
             self.hparams.dataset, patch_size=self.hparams.patch_size
@@ -72,16 +70,24 @@ class HyphenDetection(pl.LightningModule):
         self.val_dataset = HyphenDataset(
             self.hparams.dataset, split="val", patch_size=self.hparams.patch_size
         )
-        self.loss = PartiallyHuberisedCrossEntropyLoss(tau=self.hparams.tau)
+        self.loss = (
+            PartiallyHuberisedCrossEntropyLoss(tau=self.hparams.tau)
+            if self.hparams.assume_label_noise
+            else CrossEntropyLoss()
+        )
 
     def forward(self, images) -> torch.Tensor:
         return self.model(images)
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx):
         images, labels = batch
         if batch_idx == 0:
             self.logger.experiment.log(
-                {"sample_input_batch": wandb.Image(make_grid(images))}, commit=False
+                {
+                    "sample_input_batch": wandb.Image(make_grid(images[:, 1:])),
+                    "sample_masks": wandb.Image(make_grid(images[:, 0].unsqueeze(1))),
+                },
+                commit=False,
             )
         logits = self.forward(images)
         loss = self.loss(logits, labels)
@@ -127,9 +133,7 @@ class HyphenDetection(pl.LightningModule):
         self.log("val_accuracy", accuracy)
         labels = labels.numpy()
         predictions = predictions.numpy()
-        mcc = torch.Tensor([matthews_corrcoef(labels, predictions)]).type_as(
-            validation_step_outputs[0][0]
-        )
+        mcc = torch.Tensor([matthews_corrcoef(labels, predictions)]).to(self.device)
         self.logger.experiment.log(
             {
                 "val_conf_mat": confusion_matrix(
@@ -139,16 +143,24 @@ class HyphenDetection(pl.LightningModule):
             commit=False,
         )
 
-        self.log("matthews_corrcoef", mcc, sync_dist=True)
+        self.log("val_matthews_corrcoef", mcc, sync_dist=True)
 
     def train_dataloader(self):
+        enable_unbiased_sampling = (
+            self.current_epoch
+            >= self.hparams.epochs - self.hparams.unbiased_sampling_epochs
+        )
+
         return DataLoader(
             self.train_dataset,
             batch_size=self.hparams.batch_size,
             num_workers=os.cpu_count() or 1,
             sampler=DistributedProxySampler(
                 WeightedRandomSampler(
-                    self.train_dataset.weights, len(self.train_dataset)
+                    np.ones_like(self.train_dataset.weights)
+                    if enable_unbiased_sampling
+                    else self.train_dataset.weights,
+                    len(self.train_dataset),
                 )
             )
             if self.hparams.balance_dataset
@@ -166,23 +178,43 @@ class HyphenDetection(pl.LightningModule):
         )
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(
-            self.model.parameters(),
-            lr=self.hparams.learning_rate * self.trainer.num_gpus,
+        optimizer = Adam(
+            self.parameters(),
+            lr=self.hparams.learning_rate,
+            weight_decay=self.hparams.weight_decay,
         )
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+        scheduler = OneCycleLR(
+            optimizer,
+            max_lr=self.hparams.learning_rate,
+            epochs=self.hparams.epochs,
+            steps_per_epoch=math.ceil(
+                len(self.train_dataset) / self.effective_batch_size
+            ),
+            pct_start=0.2,
+        )
         return [optimizer], [
-            {"scheduler": scheduler, "monitor": self.hparams.target_metric}
+            {"scheduler": scheduler, "interval": "step", "frequency": 1}
         ]
 
     def on_train_end(self):
-        artifact = wandb.Artifact("patch_detector", type="model")
-        artifact.add_file(
-            os.path.join(
-                self.trainer.checkpoint_callback.dirpath, "patch_detector.ckpt"
+        if (
+            self.trainer.checkpoint_callback
+            and self.trainer.checkpoint_callback.best_model_path
+        ):
+            logger.info("Saving Artifact...")
+            artifact = wandb.Artifact("patch_detector", type="model")
+            artifact.add_file(
+                self.trainer.checkpoint_callback.best_model_path, "best.ckpt"
             )
-        )
-        self.logger.experiment.log_artifact(artifact)
+            if self.trainer.checkpoint_callback.last_model_path:
+                artifact.add_file(
+                    self.trainer.checkpoint_callback.last_model_path, "last.ckpt"
+                )
+            self.logger.experiment.log_artifact(artifact)
+
+    @property
+    def effective_batch_size(self):
+        return self.hparams.batch_size * self.trainer.num_gpus
 
 
 def main():
@@ -206,6 +238,7 @@ def main():
             filename="patch_detector",
             monitor=args.target_metric,
             save_top_k=1,
+            save_last=True,
         ),
         callbacks=[callbacks.LearningRateMonitor(logging_interval="step")],
         auto_lr_find=False,
@@ -215,7 +248,9 @@ def main():
         accumulate_grad_batches=args.accumulate_grad_batches,
         replace_sampler_ddp=False,
         accelerator="ddp",
+        reload_dataloaders_every_epoch=args.unbiased_sampling_epochs > 0,
     )
+    logger.info("Checkpoint directory {}", trainer.checkpoint_callback.dirpath)
     trainer.tune(model)
     trainer.fit(model)
 

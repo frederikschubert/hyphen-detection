@@ -8,36 +8,34 @@ import torch
 from PIL import Image
 from torch import nn
 from torch.utils.data.dataloader import DataLoader
+from torchvision.transforms.functional import to_tensor
 from torchvision.transforms.transforms import (
     Compose,
+    Normalize,
     RandomHorizontalFlip,
-    RandomRotation,
+    RandomAffine,
     ToTensor,
 )
 from tqdm import tqdm
 
-transform = Compose(
+
+normalize = Compose([Normalize([0.3616, 0.4328, 0.3969], [0.1581, 0.1880, 0.1735])])
+augment = Compose(
     [
-        ToTensor(),
-        RandomRotation(180),
+        RandomAffine(degrees=180, translate=(0.2, 0.2), fillcolor=None),
         RandomHorizontalFlip(),
     ]
 )
 
-test_transform = Compose([ToTensor()])
 
-
-def compute_mean_std(dataset, device):
+def compute_mean_std(dataset):
     loader = DataLoader(
-        dataset,
-        batch_size=512,
-        num_workers=os.cpu_count() or 1,
+        dataset, batch_size=512, num_workers=os.cpu_count() or 1, pin_memory=True
     )
 
     mean = 0.0
     std = 0.0
     for images, _ in tqdm(loader, total=len(dataset) // 512):
-        images = images.to(device)
         batch_samples = images.size(0)
         images = images.view(batch_samples, images.size(1), -1)
         mean += images.mean(2).sum(0)
@@ -83,6 +81,24 @@ def crop_patch(padded_image, center: Tuple[int, int], patch_size: int):
     return patch
 
 
+def create_mask(
+    height: int,
+    width: int,
+    center: Tuple[int, int],
+    patch_size: int,
+    mask_radius: int = 4,
+):
+    x_center, y_center = center
+    center_mask = np.zeros(shape=[height, width, 1], dtype=np.float32)
+    y, x = np.ogrid[-y_center : height - y_center, -x_center : width - x_center]
+    mask = x ** 2 + y ** 2 <= 4 ** 2
+    center_mask[mask] = 1
+    center_mask = pad_image(center_mask, patch_size)
+    center_mask = crop_patch(center_mask, center, patch_size)
+    center_mask = ToTensor()(center_mask)
+    return center_mask
+
+
 def visualize_predictions(
     model: nn.Module,
     image_path: str,
@@ -98,7 +114,14 @@ def visualize_predictions(
     padded_image = pad_image(image, patch_size)
     image_patches = []
     for center in centers:
-        padded_patch = test_transform(crop_patch(padded_image, center, patch_size))
+        center_mask = create_mask(
+            height=image.shape[0],
+            width=image.shape[1],
+            center=center,
+            patch_size=patch_size,
+        )
+        padded_patch = to_tensor(crop_patch(padded_image, center, patch_size))
+        padded_patch = torch.cat([center_mask, padded_patch])
         image_patches.append(padded_patch)
     image_patches = torch.stack(image_patches)
     image_patches = image_patches.to(model.device)

@@ -5,14 +5,13 @@ from typing import List, Literal, Tuple
 import numpy as np
 from loguru import logger
 from PIL import Image
+import torch
 from torch.utils.data import Dataset
+from torchvision.transforms.functional import to_tensor
+from torchvision.transforms.transforms import ToTensor
 from tqdm import tqdm
 
-from common.utils import (
-    crop_patch,
-    pad_image,
-    transform,
-)
+from common.utils import create_mask, crop_patch, pad_image, augment, normalize
 
 
 class HyphenDataset(Dataset):
@@ -21,12 +20,14 @@ class HyphenDataset(Dataset):
         path: str,
         split: Literal["train", "val"] = "train",
         patch_size: int = 80,
+        concat_mask: bool = True,
     ):
         self.file = os.path.join(path, split, "annotations.csv")
         self.patch_size = patch_size
         self.image_paths: List[str] = []
         self.labels: List[int] = []
         self.centers: List[Tuple[int, int]] = []
+        self.concat_mask = concat_mask
         with open(self.file, "r", newline="") as csvfile:
             reader = csv.DictReader(csvfile)
             logger.info("Reading annotations...")
@@ -72,9 +73,17 @@ class HyphenDataset(Dataset):
     def __getitem__(self, index):
         image = Image.open(self.image_paths[index]).convert("RGB")
         image = np.array(image)
-        padded_image = pad_image(image, self.patch_size)
         center = self.centers[index]
         label = self.labels[index]
-        patch = crop_patch(padded_image, center, self.patch_size)
-        patch = transform(patch)
+        padded_image = pad_image(image, self.patch_size)
+        patch = to_tensor(crop_patch(padded_image, center, self.patch_size))
+        if self.concat_mask:
+            center_mask = create_mask(
+                height=image.shape[0],
+                width=image.shape[1],
+                center=center,
+                patch_size=self.patch_size,
+            )
+            patch = torch.cat([center_mask, patch])
+        patch = augment(patch)
         return patch, label
