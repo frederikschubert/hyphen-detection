@@ -75,6 +75,7 @@ class HyphenDetection(pl.LightningModule):
             if self.hparams.assume_label_noise
             else CrossEntropyLoss()
         )
+        self.val_loss = CrossEntropyLoss()
 
     def forward(self, images) -> torch.Tensor:
         return self.model(images)
@@ -113,7 +114,7 @@ class HyphenDetection(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         images, labels = batch
         logits = self.forward(images)
-        loss = self.loss(logits, labels)
+        loss = self.val_loss(logits, labels)
         self.log("val_loss", loss, sync_dist=True)
         f1 = metrics.f1_score(logits, labels, 2)
         self.log("val_f1", f1, sync_dist=True)
