@@ -1,4 +1,3 @@
-from common.one_cycle_lr import OneCycleLR
 import os
 import random
 import tempfile
@@ -21,6 +20,7 @@ from torch.optim.adam import Adam
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import WeightedRandomSampler
 from torchvision.utils import make_grid
+from torch.optim.lr_scheduler import OneCycleLR
 
 from common.confusion_matrix import confusion_matrix
 from common.distributed_proxy_sampler import DistributedProxySampler
@@ -36,17 +36,17 @@ class Arguments(Tap):
     dataset: str = "./nobackup/dataset_3/"
     model_name: str = "efficientnet_b3"
     model_checkpoint: Optional[str] = None
-    epochs: int = 60
+    epochs: int = 20
     batch_size: int = 16
     learning_rate: float = 1e-3
     weight_decay: float = 1e-5
     debug: bool = False
-    balance_dataset: bool = False
-    pretrained: bool = False
-    fp16: bool = False
+    balance_dataset: bool = True
+    pretrained: bool = True
+    fp16: bool = True
     accumulate_grad_batches: int = 1
     target_metric: str = "val_matthews_corrcoef"
-    patch_size: int = 260
+    patch_size: int = 300
     tau: float = 10.0
     num_samples: int = 4
     assume_label_noise: bool = False
@@ -187,10 +187,7 @@ class HyphenDetection(pl.LightningModule):
         scheduler = OneCycleLR(
             optimizer,
             max_lr=self.hparams.learning_rate,
-            epochs=self.hparams.epochs,
-            steps_per_epoch=math.ceil(
-                len(self.train_dataset) / self.effective_batch_size
-            ),
+            total_steps=self.hparams.epochs * len(self.train_dataset),
             pct_start=0.2,
         )
         return [optimizer], [
@@ -212,10 +209,6 @@ class HyphenDetection(pl.LightningModule):
                     self.trainer.checkpoint_callback.last_model_path, "last.ckpt"
                 )
             self.logger.experiment.log_artifact(artifact)
-
-    @property
-    def effective_batch_size(self):
-        return self.hparams.batch_size * self.trainer.num_gpus
 
 
 def main():

@@ -11,7 +11,7 @@ from torchvision.transforms.functional import to_tensor
 from torchvision.transforms.transforms import ToTensor
 from tqdm import tqdm
 
-from common.utils import create_mask, crop_patch, pad_image, augment, normalize
+from common.utils import create_mask, crop_patch, pad_image, augment
 
 
 class HyphenDataset(Dataset):
