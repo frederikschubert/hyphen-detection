@@ -99,34 +99,15 @@ def create_mask(
     return center_mask
 
 
-def visualize_predictions(
-    model: nn.Module,
-    image_path: str,
-    centers: List[Tuple[int, int]],
-    patch_size: int,
-    labels: List[int] = [],
+def get_detection_image(
+    image,
+    centers,
+    predictions,
+    labels=[],
     circle_radius: int = 4,
     circle_color: Tuple[int, int, int] = (240, 240, 240),
     circle_thickness: int = 1,
 ):
-    image = Image.open(image_path).convert("RGB")
-    image = np.array(image)
-    padded_image = pad_image(image, patch_size)
-    image_patches = []
-    for center in centers:
-        center_mask = create_mask(
-            height=image.shape[0],
-            width=image.shape[1],
-            center=center,
-            patch_size=patch_size,
-        )
-        padded_patch = to_tensor(crop_patch(padded_image, center, patch_size))
-        padded_patch = torch.cat([center_mask, padded_patch])
-        image_patches.append(padded_patch)
-    image_patches = torch.stack(image_patches)
-    image_patches = image_patches.to(model.device)
-    with torch.no_grad():
-        predictions = model(image_patches).argmax(dim=-1).cpu().numpy()
     if not labels:
         labels = [-1] * len(centers)
     for center, prediction, label in zip(centers, predictions, labels):
@@ -163,5 +144,34 @@ def visualize_predictions(
                 (255, 0, 0),
                 circle_thickness,
             )
+    return image
+
+
+def visualize_predictions(
+    model: nn.Module,
+    image_path: str,
+    centers: List[Tuple[int, int]],
+    patch_size: int,
+    labels: List[int] = [],
+):
+    image = Image.open(image_path).convert("RGB")
+    image = np.array(image)
+    padded_image = pad_image(image, patch_size)
+    image_patches = []
+    for center in centers:
+        center_mask = create_mask(
+            height=image.shape[0],
+            width=image.shape[1],
+            center=center,
+            patch_size=patch_size,
+        )
+        padded_patch = to_tensor(crop_patch(padded_image, center, patch_size))
+        padded_patch = torch.cat([center_mask, padded_patch])
+        image_patches.append(padded_patch)
+    image_patches = torch.stack(image_patches)
+    image_patches = image_patches.to(model.device)
+    with torch.no_grad():
+        predictions = model(image_patches).argmax(dim=-1).cpu().numpy()
+    image = get_detection_image(image, centers, predictions, labels)
 
     return image

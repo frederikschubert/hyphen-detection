@@ -33,11 +33,11 @@ class Arguments(Tap):
     name: Optional[str] = None
     project: str = "hyphen"
     tags: List[str] = []
-    dataset: str = "./nobackup/dataset_3/"
+    dataset: str = "./nobackup/dataset_5/"
     model_name: str = "efficientnet_b3"
     model_checkpoint: Optional[str] = None
     epochs: int = 20
-    batch_size: int = 16
+    batch_size: int = 8
     learning_rate: float = 1e-3
     weight_decay: float = 1e-5
     debug: bool = False
@@ -54,30 +54,33 @@ class Arguments(Tap):
 
 
 class HyphenDetection(pl.LightningModule):
-    def __init__(self, hparams):
+    def __init__(self, **hparams):
         super().__init__()
-        self.hparams: Arguments = hparams
+        self.params: Arguments = Arguments().from_dict(hparams)
+        self.save_hyperparameters()
 
         self.model = timm.create_model(
-            self.hparams.model_name,
-            pretrained=self.hparams.pretrained,
+            self.params.model_name,
+            pretrained=self.params.pretrained,
             num_classes=2,
             in_chans=4,
         )
         self.train_dataset = HyphenDataset(
-            self.hparams.dataset, patch_size=self.hparams.patch_size
+            self.params.dataset, patch_size=self.params.patch_size
         )
         self.val_dataset = HyphenDataset(
-            self.hparams.dataset, split="val", patch_size=self.hparams.patch_size
+            self.params.dataset, split="val", patch_size=self.params.patch_size
         )
         self.loss = (
-            PartiallyHuberisedCrossEntropyLoss(tau=self.hparams.tau)
-            if self.hparams.assume_label_noise
+            PartiallyHuberisedCrossEntropyLoss(tau=self.params.tau)
+            if self.params.assume_label_noise
             else CrossEntropyLoss()
         )
         self.val_loss = CrossEntropyLoss()
 
-    def forward(self, images) -> torch.Tensor:
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        if images.dim() == 3:
+            images = images.unsqueeze(0)
         return self.model(images)
 
     def training_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx):
@@ -95,7 +98,7 @@ class HyphenDetection(pl.LightningModule):
         self.log("loss", loss, sync_dist=True)
         if batch_idx % 100 == 0:
             image_paths = random.choices(
-                self.val_dataset.image_paths, k=self.hparams.num_samples
+                self.val_dataset.image_paths, k=self.params.num_samples
             )
             for i, image_path in enumerate(image_paths):
                 image = visualize_predictions(
@@ -103,7 +106,7 @@ class HyphenDetection(pl.LightningModule):
                     image_path,
                     centers=self.val_dataset.get_centers_for_image(image_path),
                     labels=self.val_dataset.get_labels_for_image(image_path),
-                    patch_size=self.hparams.patch_size,
+                    patch_size=self.params.patch_size,
                 )
                 self.logger.experiment.log(
                     {f"sample_{i}": wandb.Image(image, caption=image_path)},
@@ -149,12 +152,12 @@ class HyphenDetection(pl.LightningModule):
     def train_dataloader(self):
         enable_unbiased_sampling = (
             self.current_epoch
-            >= self.hparams.epochs - self.hparams.unbiased_sampling_epochs
+            >= self.params.epochs - self.params.unbiased_sampling_epochs
         )
 
         return DataLoader(
             self.train_dataset,
-            batch_size=self.hparams.batch_size,
+            batch_size=self.params.batch_size,
             num_workers=os.cpu_count() or 1,
             sampler=DistributedProxySampler(
                 WeightedRandomSampler(
@@ -164,16 +167,16 @@ class HyphenDetection(pl.LightningModule):
                     len(self.train_dataset),
                 )
             )
-            if self.hparams.balance_dataset
+            if self.params.balance_dataset
             else None,
-            shuffle=False if self.hparams.balance_dataset else True,
+            shuffle=False if self.params.balance_dataset else True,
             pin_memory=True,
         )
 
     def val_dataloader(self):
         return DataLoader(
             self.val_dataset,
-            batch_size=self.hparams.batch_size,
+            batch_size=self.params.batch_size,
             num_workers=os.cpu_count() or 1,
             pin_memory=True,
         )
@@ -181,13 +184,17 @@ class HyphenDetection(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = Adam(
             self.parameters(),
-            lr=self.hparams.learning_rate,
-            weight_decay=self.hparams.weight_decay,
+            lr=self.params.learning_rate,
+            weight_decay=self.params.weight_decay,
         )
         scheduler = OneCycleLR(
             optimizer,
-            max_lr=self.hparams.learning_rate,
-            total_steps=self.hparams.epochs * len(self.train_dataset),
+            max_lr=self.params.learning_rate,
+            total_steps=int(
+                self.params.epochs
+                * len(self.train_dataset)
+                / (self.params.batch_size * self.trainer.num_gpus)
+            ),
             pct_start=0.2,
         )
         return [optimizer], [
@@ -216,12 +223,13 @@ def main():
     random.seed(0)
     np.random.seed(0)
     torch.manual_seed(0)
-    model = HyphenDetection(args.as_dict())
+    model = HyphenDetection(**args.as_dict())
     trainer = pl.Trainer(
         max_epochs=args.epochs,
         gpus=-1,
         logger=loggers.WandbLogger(
             project=args.project,
+            entity="frederikschubert",
             tags=args.tags,
             job_type="train",
             name=args.name,

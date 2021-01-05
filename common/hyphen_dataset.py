@@ -14,20 +14,32 @@ from tqdm import tqdm
 from common.utils import create_mask, crop_patch, pad_image, augment
 
 
+def read_patch(image, center, patch_size: int):
+    image = np.array(image)
+    padded_image = pad_image(image, patch_size)
+    patch = to_tensor(crop_patch(padded_image, center, patch_size))
+    center_mask = create_mask(
+        height=image.shape[0],
+        width=image.shape[1],
+        center=center,
+        patch_size=patch_size,
+    )
+    patch = torch.cat([center_mask, patch])
+    return patch
+
+
 class HyphenDataset(Dataset):
     def __init__(
         self,
         path: str,
         split: Literal["train", "val"] = "train",
         patch_size: int = 80,
-        concat_mask: bool = True,
     ):
         self.file = os.path.join(path, split, "annotations.csv")
         self.patch_size = patch_size
         self.image_paths: List[str] = []
         self.labels: List[int] = []
         self.centers: List[Tuple[int, int]] = []
-        self.concat_mask = concat_mask
         with open(self.file, "r", newline="") as csvfile:
             reader = csv.DictReader(csvfile)
             logger.info("Reading annotations...")
@@ -53,6 +65,10 @@ class HyphenDataset(Dataset):
         )
         logger.info("Loaded dataset")
 
+    def get_percentage_for_image(self, query_image_path: str):
+        labels = self.get_labels_for_image(query_image_path)
+        return sum(labels) / len(labels)
+
     def get_centers_for_image(self, query_image_path: str):
         return [
             center
@@ -71,19 +87,9 @@ class HyphenDataset(Dataset):
         return len(self.image_paths)
 
     def __getitem__(self, index):
-        image = Image.open(self.image_paths[index]).convert("RGB")
-        image = np.array(image)
         center = self.centers[index]
-        label = self.labels[index]
-        padded_image = pad_image(image, self.patch_size)
-        patch = to_tensor(crop_patch(padded_image, center, self.patch_size))
-        if self.concat_mask:
-            center_mask = create_mask(
-                height=image.shape[0],
-                width=image.shape[1],
-                center=center,
-                patch_size=self.patch_size,
-            )
-            patch = torch.cat([center_mask, patch])
+        image = Image.open(self.image_paths[index]).convert("RGB")
+        patch = read_patch(image, center, self.patch_size)
         patch = augment(patch)
+        label = self.labels[index]
         return patch, label
