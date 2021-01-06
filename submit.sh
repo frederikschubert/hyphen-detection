@@ -9,6 +9,7 @@
 #SBATCH --cpus-per-task=24
 #SBATCH --mem-per-cpu=3G
 #SBATCH --gpus=2
+#SBATCH --job-name=hyphen
 
 mkdir -p /localstorage/schubert/wandb/
 cd /home/schubert/projects/hyphen
