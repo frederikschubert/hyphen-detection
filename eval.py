@@ -1,21 +1,21 @@
-from collections import OrderedDict
 import csv
-from PIL import Image
-import torch
-import math
-from common.hyphen_dataset import read_patch
 import os
-import torch.nn.functional as F
-
-import numpy as np
-from common.utils import get_detection_image, visualize_predictions
+from collections import OrderedDict
 from pathlib import Path
-from typing import Tuple
 
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import numpy as np
+import torch
+import torch.nn.functional as F
 import wandb
 from loguru import logger
+from PIL import Image
 from tqdm import tqdm
 
+from common.hyphen_dataset import read_patch
+from common.segmentation import create_segmentation
+from common.utils import get_detection_image, visualize_predictions
 from train import Arguments, HyphenDetection
 
 
@@ -45,6 +45,12 @@ class EvalArguments(Arguments):
     artifact_tag: str = "latest"
     threshold: float = 0.99
     num_samples: int = np.infty
+    create_segmentation: bool = False
+    segmentation_granularity: int = 8
+
+    def process_args(self):
+        if self.debug:
+            self.num_samples = 2
 
 
 def main():
@@ -96,17 +102,29 @@ def main():
                     predictions.append(1 if prediction[1] > args.threshold else 0)
                 percentage = round(sum(predictions) / len(predictions) * 100, 2)
                 percentages.append(percentage)
+                sample_name = (
+                    os.path.basename(image_path).split(".")[0].split("_Laser")[0]
+                )
                 row = OrderedDict(
                     {
                         "mineral": os.path.basename(args.eval_dir),
-                        "sample": os.path.basename(image_path)
-                        .split(".")[0]
-                        .split("_Laser")[0],
+                        "sample": sample_name,
                         "points": len(centers),
                         "points_on_hyphae": sum(predictions),
                         "percent": percentage,
                     }
                 )
+                if args.create_segmentation:
+                    segmentation = create_segmentation(
+                        model,
+                        image,
+                        args.patch_size,
+                        args.threshold,
+                        args.segmentation_granularity,
+                    )
+                    wandb.log(
+                        {"segmentation": wandb.Image(segmentation, caption=sample_name)}
+                    )
                 # TODO(frederik): create svg file with markers
                 # TODO(frederik): generalize this to multiple minerals
                 writer.writerow(row)
