@@ -1,3 +1,4 @@
+from common.svg import create_svg
 import csv
 import os
 from collections import OrderedDict
@@ -14,7 +15,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from common.hyphen_dataset import read_patch
-from common.segmentation import create_segmentation
+from common.segmentation import create_segmentation, get_predictions
 from common.utils import get_detection_image, visualize_predictions
 from train import Arguments, HyphenDetection
 
@@ -43,10 +44,10 @@ class EvalArguments(Arguments):
     eval_dir: str = "/home/schubert/projects/hyphen/data/Chile_Input_2/LCN/Biotit"
     artifact_name: str = "patch_detector"
     artifact_tag: str = "latest"
-    threshold: float = 0.99
+    threshold: float = 0.95
     num_samples: int = np.infty
     create_segmentation: bool = False
-    segmentation_granularity: int = 8
+    segmentation_granularity: int = 10
 
     def process_args(self):
         if self.debug:
@@ -62,6 +63,8 @@ def main():
         config=args.as_dict(),
         mode="disabled" if args.debug else "run",
     )
+    if "SLURM_JOB_ID" in os.environ:
+        wandb.config.update({"SLURM_JOB_ID": os.environ["SLURM_JOB_ID"]})
     logger.info("Restoring model...")
     model: HyphenDetection = HyphenDetection.load_from_checkpoint(
         str(get_artifact_path(args.artifact_name, args.artifact_tag) / "best.ckpt"),
@@ -91,19 +94,25 @@ def main():
             writer.writeheader()
             percentages = []
             rows = []
+            grid_images_path = os.path.join(wandb.run.dir, "Bilder_mitRaster")
+            os.makedirs(grid_images_path)
             for i, image_path in tqdm(enumerate(sorted(images)), total=len(images)):
                 logger.trace(image_path)
                 image = Image.open(image_path).convert("RGB")
                 image = np.array(image)
-                predictions = []
-                for center in tqdm(centers):
-                    patch = read_patch(image, center, args.patch_size).to(model.device)
-                    prediction = F.softmax(model(patch).squeeze(), dim=-1)
-                    predictions.append(1 if prediction[1] > args.threshold else 0)
+                predictions = get_predictions(
+                    model, image, centers, args.patch_size, args.threshold
+                )
                 percentage = round(sum(predictions) / len(predictions) * 100, 2)
                 percentages.append(percentage)
                 sample_name = (
                     os.path.basename(image_path).split(".")[0].split("_Laser")[0]
+                )
+                create_svg(
+                    os.path.join(grid_images_path, f"{sample_name}.svg"),
+                    image_path,
+                    centers,
+                    predictions,
                 )
                 row = OrderedDict(
                     {
@@ -123,10 +132,19 @@ def main():
                         args.segmentation_granularity,
                     )
                     wandb.log(
-                        {"segmentation": wandb.Image(segmentation, caption=sample_name)}
+                        {
+                            f"{sample_name}_segmentation": wandb.Image(
+                                image,
+                                masks={
+                                    "predictions": {
+                                        "mask_data": segmentation,
+                                        "class_labels": {0: "background", 1: "hyphae"},
+                                    }
+                                },
+                                caption=sample_name,
+                            )
+                        }
                     )
-                # TODO(frederik): create svg file with markers
-                # TODO(frederik): generalize this to multiple minerals
                 writer.writerow(row)
                 rows.append(list(row.values()))
                 csv_file.flush()
