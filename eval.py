@@ -44,7 +44,6 @@ class EvalArguments(Arguments):
     eval_dir: str = "/home/schubert/projects/hyphen/data/Chile_Input_2/LCN/Biotit"
     artifact_name: str = "patch_detector"
     artifact_tag: str = "latest"
-    threshold: float = 0.95
     num_samples: int = np.infty
     create_segmentation: bool = False
     segmentation_granularity: int = 10
@@ -100,9 +99,7 @@ def main():
                 logger.trace(image_path)
                 image = Image.open(image_path).convert("RGB")
                 image = np.array(image)
-                predictions = get_predictions(
-                    model, image, centers, args.patch_size, args.threshold
-                )
+                predictions = get_predictions(model, image, centers, args.patch_size)
                 percentage = round(sum(predictions) / len(predictions) * 100, 2)
                 percentages.append(percentage)
                 sample_name = (
@@ -128,7 +125,6 @@ def main():
                         model,
                         image,
                         args.patch_size,
-                        args.threshold,
                         args.segmentation_granularity,
                     )
                     wandb.log(

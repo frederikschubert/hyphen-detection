@@ -5,27 +5,10 @@ from typing import List, Literal, Tuple
 import numpy as np
 from loguru import logger
 from PIL import Image
-import torch
 from torch.utils.data import Dataset
-from torchvision.transforms.functional import to_tensor
-from torchvision.transforms.transforms import ToTensor
 from tqdm import tqdm
 
-from common.utils import create_mask, crop_patch, pad_image, augment
-
-
-def read_patch(image, center, patch_size: int):
-    image = np.array(image)
-    padded_image = pad_image(image, patch_size)
-    patch = to_tensor(crop_patch(padded_image, center, patch_size))
-    center_mask = create_mask(
-        height=image.shape[0],
-        width=image.shape[1],
-        center=center,
-        patch_size=patch_size,
-    )
-    patch = torch.cat([center_mask, patch])
-    return patch
+from common.utils import augment, read_patch
 
 
 class HyphenDataset(Dataset):

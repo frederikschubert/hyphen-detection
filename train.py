@@ -33,7 +33,7 @@ class Arguments(Tap):
     name: Optional[str] = None
     project: str = "hyphen"
     tags: List[str] = []
-    dataset: str = "./nobackup/dataset_5/"
+    dataset: str = "./nobackup/dataset_6/"
     model_name: str = "efficientnet_b3"
     model_checkpoint: Optional[str] = None
     epochs: int = 20
@@ -64,7 +64,9 @@ class HyphenDetection(pl.LightningModule):
             pretrained=self.params.pretrained,
             num_classes=2,
             in_chans=4,
+            global_pool="max",
         )
+        logger.debug(self.model)
         self.train_dataset = HyphenDataset(
             self.params.dataset, patch_size=self.params.patch_size
         )
@@ -189,7 +191,7 @@ class HyphenDetection(pl.LightningModule):
         )
         scheduler = OneCycleLR(
             optimizer,
-            max_lr=self.params.learning_rate,
+            max_lr=self.params.learning_rate * self.trainer.num_gpus,
             total_steps=int(
                 self.params.epochs
                 * len(self.train_dataset)

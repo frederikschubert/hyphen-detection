@@ -28,6 +28,20 @@ augment = Compose(
 )
 
 
+def read_patch(image, center, patch_size: int):
+    image = np.array(image)
+    padded_image = pad_image(image, patch_size)
+    patch = to_tensor(crop_patch(padded_image, center, patch_size))
+    center_mask = create_mask(
+        height=image.shape[0],
+        width=image.shape[1],
+        center=center,
+        patch_size=patch_size,
+    )
+    patch = torch.cat([center_mask, patch])
+    return patch
+
+
 def compute_mean_std(dataset):
     loader = DataLoader(
         dataset, batch_size=512, num_workers=os.cpu_count() or 1, pin_memory=True
