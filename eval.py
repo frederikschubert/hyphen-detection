@@ -1,3 +1,5 @@
+from typing import cast
+import pyvips
 from common.svg import create_svg
 import csv
 import os
@@ -50,7 +52,7 @@ class EvalArguments(Arguments):
 
     def process_args(self):
         if self.debug:
-            self.num_samples = 2
+            self.num_samples = 20
 
 
 def main():
@@ -72,12 +74,14 @@ def main():
     model.to("cuda")
     model.eval()
     images = list(Path(args.eval_dir).glob("**/*Laser.bmp"))
+    # images = list(Path(args.eval_dir).glob("**/*.png"))
     logger.info("Evaluating {} images...", len(images))
-    centers = model.val_dataset.get_centers_for_image(model.val_dataset.image_paths[0])
+    centers = model.val_dataset.get_centers_for_image(model.val_dataset._image_paths[0])
     logger.debug("Centers: {}", len(centers))
+    output_dir = wandb.run.dir if wandb.run.dir != "/" else "./data/tmp"
     with torch.no_grad():
         with open(
-            os.path.join(wandb.run.dir, "percentages.csv"), "w", newline=""
+            os.path.join(output_dir, "percentages.csv"), "w", newline=""
         ) as csv_file:
             fieldnames = [
                 "mineral",
@@ -93,11 +97,13 @@ def main():
             writer.writeheader()
             percentages = []
             rows = []
-            grid_images_path = os.path.join(wandb.run.dir, "Bilder_mitRaster")
-            os.makedirs(grid_images_path)
+            grid_images_path = os.path.join(output_dir, "Bilder_mitRaster")
+            os.makedirs(grid_images_path, exist_ok=True)
             for i, image_path in tqdm(enumerate(sorted(images)), total=len(images)):
+                if i > args.num_samples:
+                    break
                 logger.trace(image_path)
-                image = Image.open(image_path).convert("RGB")
+                image = Image.open(image_path).convert("RGB").resize((780, 660))
                 image = np.array(image)
                 predictions = get_predictions(model, image, centers, args.patch_size)
                 percentage = round(sum(predictions) / len(predictions) * 100, 2)
@@ -105,7 +111,7 @@ def main():
                 sample_name = (
                     os.path.basename(image_path).split(".")[0].split("_Laser")[0]
                 )
-                create_svg(
+                svg = create_svg(
                     os.path.join(grid_images_path, f"{sample_name}.svg"),
                     image_path,
                     centers,
@@ -144,8 +150,7 @@ def main():
                 writer.writerow(row)
                 rows.append(list(row.values()))
                 csv_file.flush()
-                if i > args.num_samples:
-                    break
+
             mean_percentage = round(np.mean(percentages), 2)
             logger.info(
                 "Mean Percentage for {} is {}",

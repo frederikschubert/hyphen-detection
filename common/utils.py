@@ -1,6 +1,6 @@
 import multiprocessing as mp
 import os
-from typing import List, Tuple
+from typing import List, Tuple, cast
 
 import cv2
 import numpy as np
@@ -125,6 +125,7 @@ def get_detection_image(
     if not labels:
         labels = [-1] * len(centers)
     for center, prediction, label in zip(centers, predictions, labels):
+        center = tuple(center)
         image = cv2.circle(
             image,
             center,
@@ -170,20 +171,8 @@ def visualize_predictions(
 ):
     image = Image.open(image_path).convert("RGB")
     image = np.array(image)
-    padded_image = pad_image(image, patch_size)
-    image_patches = []
-    for center in centers:
-        center_mask = create_mask(
-            height=image.shape[0],
-            width=image.shape[1],
-            center=center,
-            patch_size=patch_size,
-        )
-        padded_patch = to_tensor(crop_patch(padded_image, center, patch_size))
-        padded_patch = torch.cat([center_mask, padded_patch])
-        image_patches.append(padded_patch)
-    image_patches = torch.stack(image_patches)
-    image_patches = image_patches.to(model.device)
+    image_patches = torch.stack([read_patch(image, center, patch_size) for center in centers])
+    image_patches = image_patches.to(cast(str, model.device))
     with torch.no_grad():
         predictions = model(image_patches).argmax(dim=-1).cpu().numpy()
     image = get_detection_image(image, centers, predictions, labels)

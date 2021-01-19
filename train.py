@@ -4,6 +4,7 @@ import tempfile
 import math
 from typing import List, Optional, Tuple
 from loguru import logger
+import shtab
 
 import numpy as np
 import pytorch_lightning as pl
@@ -41,7 +42,7 @@ class Arguments(Tap):
     learning_rate: float = 1e-3
     weight_decay: float = 1e-5
     debug: bool = False
-    balance_dataset: bool = True
+    balance_dataset: bool = False
     pretrained: bool = True
     fp16: bool = True
     accumulate_grad_batches: int = 1
@@ -51,6 +52,17 @@ class Arguments(Tap):
     num_samples: int = 4
     assume_label_noise: bool = False
     unbiased_sampling_epochs: int = 0
+    subsample: bool = False
+
+    def process_args(self):
+        if self.subsample and self.balance_dataset:
+            raise ValueError(
+                "--subsample and --balance_dataset cannot be true simultaneously"
+            )
+        super().process_args()
+
+    def configure(self):
+        shtab.add_argument_to(self)
 
 
 class HyphenDetection(pl.LightningModule):
@@ -64,11 +76,11 @@ class HyphenDetection(pl.LightningModule):
             pretrained=self.params.pretrained,
             num_classes=2,
             in_chans=4,
-            global_pool="max",
+            # global_pool="max",
         )
         logger.debug(self.model)
         self.train_dataset = HyphenDataset(
-            self.params.dataset, patch_size=self.params.patch_size
+            self.params.dataset, patch_size=self.params.patch_size, subsample=self.params.subsample,
         )
         self.val_dataset = HyphenDataset(
             self.params.dataset, split="val", patch_size=self.params.patch_size
@@ -100,7 +112,7 @@ class HyphenDetection(pl.LightningModule):
         self.log("loss", loss, sync_dist=True)
         if batch_idx % 100 == 0:
             image_paths = random.choices(
-                self.val_dataset.image_paths, k=self.params.num_samples
+                self.val_dataset._image_paths, k=self.params.num_samples
             )
             for i, image_path in enumerate(image_paths):
                 image = visualize_predictions(
@@ -250,7 +262,7 @@ def main():
         fast_dev_run=args.debug,
         precision=16 if args.fp16 else 32,
         accumulate_grad_batches=args.accumulate_grad_batches,
-        replace_sampler_ddp=False,
+        replace_sampler_ddp=not args.balance_dataset,
         accelerator="ddp",
         reload_dataloaders_every_epoch=args.unbiased_sampling_epochs > 0,
     )

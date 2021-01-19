@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from train import HyphenDetection
 
-from common.hyphen_dataset import read_patch
+from common.hyphen_dataset import read_patch, augment
 
 
 class PatchDataset(Dataset):
@@ -44,10 +44,11 @@ def get_predictions(
     for batch in patches:
         batch = batch.to(model.device)
         prediction = F.softmax(model(batch), dim=-1)
-        prediction[:, 1] *= (
-            class_weights[1] / class_weights[0]
-        )  # multiply by class frequency
-        predictions.append(prediction.argmax(dim=-1).cpu())
+        # prediction[:, 1] *= (
+        #     class_weights[1] / class_weights[0]
+        # )  # multiply by class frequency
+        prediction = prediction.argmax(dim=-1).cpu()
+        predictions.append(prediction)
     predictions = torch.cat(predictions, dim=0).squeeze()
     return predictions.numpy()
 

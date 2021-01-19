@@ -10,7 +10,7 @@ import numpy as np
 
 def create_svg(
     filename: str, image_path: str, centers: List[Tuple[int, int]], labels: List[int]
-):
+) -> str:
     img = Image(filename=image_path)
     image_data = img.make_blob(format="png")
     encoded = base64.b64encode(image_data).decode()
@@ -22,7 +22,8 @@ def create_svg(
             Circle(
                 center=center,
                 r=4,
-                style=f"fill:{'#ff0000' if label else 'none'};stroke: #fbfbfb;stroke-width: 1;stroke-opacity: 1;",
+                style=f"fill:{'#ff0000' if label == 1 else 'none'};stroke: #fbfbfb;stroke-width: 1;stroke-opacity: 1;",
             )
         )
     dwg.save(True)
+    return dwg.tostring()
