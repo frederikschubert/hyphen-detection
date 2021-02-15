@@ -28,9 +28,12 @@ augment = Compose(
 )
 
 
-def read_patch(image, center, patch_size: int):
+def read_patch(image, center, patch_size: int, pad=True):
     image = np.array(image)
-    padded_image = pad_image(image, patch_size)
+    if pad:
+        padded_image = pad_image(image, patch_size)
+    else:
+        padded_image = image
     patch = to_tensor(crop_patch(padded_image, center, patch_size))
     center_mask = create_mask(
         height=image.shape[0],

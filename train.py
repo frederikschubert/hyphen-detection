@@ -76,9 +76,7 @@ class HyphenDetection(pl.LightningModule):
             pretrained=self.params.pretrained,
             num_classes=2,
             in_chans=4,
-            # global_pool="max",
         )
-        logger.debug(self.model)
         self.train_dataset = HyphenDataset(
             self.params.dataset, patch_size=self.params.patch_size, subsample=self.params.subsample,
         )

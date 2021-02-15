@@ -1,24 +1,17 @@
-from typing import cast
-import pyvips
-from common.svg import create_svg
 import csv
 import os
 from collections import OrderedDict
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 import numpy as np
 import torch
-import torch.nn.functional as F
 import wandb
 from loguru import logger
 from PIL import Image
 from tqdm import tqdm
 
-from common.hyphen_dataset import read_patch
 from common.segmentation import create_segmentation, get_predictions
-from common.utils import get_detection_image, visualize_predictions
+from common.svg import create_svg
 from train import Arguments, HyphenDetection
 
 
@@ -45,14 +38,15 @@ def get_artifact_path(
 class EvalArguments(Arguments):
     eval_dir: str = "/home/schubert/projects/hyphen/data/Chile_Input_2/LCN/Biotit"
     artifact_name: str = "patch_detector"
-    artifact_tag: str = "latest"
+    artifact_tag: str = "v18"
     num_samples: int = np.infty
     create_segmentation: bool = False
     segmentation_granularity: int = 10
+    output_dir: str = "./data/tmp"
 
     def process_args(self):
         if self.debug:
-            self.num_samples = 20
+            self.num_samples = 50
 
 
 def main():
@@ -78,10 +72,10 @@ def main():
     logger.info("Evaluating {} images...", len(images))
     centers = model.val_dataset.get_centers_for_image(model.val_dataset._image_paths[0])
     logger.debug("Centers: {}", len(centers))
-    output_dir = wandb.run.dir if wandb.run.dir != "/" else "./data/tmp"
     with torch.no_grad():
+        os.makedirs(args.output_dir, exist_ok=True)
         with open(
-            os.path.join(output_dir, "percentages.csv"), "w", newline=""
+            os.path.join(args.output_dir, "percentages.csv"), "w", newline=""
         ) as csv_file:
             fieldnames = [
                 "mineral",
@@ -97,7 +91,7 @@ def main():
             writer.writeheader()
             percentages = []
             rows = []
-            grid_images_path = os.path.join(output_dir, "Bilder_mitRaster")
+            grid_images_path = os.path.join(args.output_dir, "Bilder_mitRaster")
             os.makedirs(grid_images_path, exist_ok=True)
             for i, image_path in tqdm(enumerate(sorted(images)), total=len(images)):
                 if i > args.num_samples:

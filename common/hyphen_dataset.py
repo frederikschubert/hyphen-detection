@@ -70,7 +70,7 @@ class HyphenDataset(Dataset):
 
     def get_centers_for_image(self, query_image_path: str):
         return [
-            center
+            tuple(center.tolist())
             for center, image_path in zip(self._centers, self._image_paths)
             if query_image_path in image_path
         ]

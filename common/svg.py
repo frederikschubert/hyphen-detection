@@ -15,7 +15,7 @@ def create_svg(
     image_data = img.make_blob(format="png")
     encoded = base64.b64encode(image_data).decode()
     pngdata = f"data:image/png;base64,{encoded}"
-    dwg = Drawing(filename, profile="tiny")
+    dwg = Drawing(filename)
     dwg.add(SVGImage(href=pngdata))
     for center, label in zip(centers, labels):
         dwg.add(
