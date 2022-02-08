@@ -17,11 +17,11 @@ def main(cfg: DictConfig):
     trainer = Trainer(
         max_epochs=cfg.epochs,
         logger=loggers.WandbLogger(
-            project=cfg.project,
-            entity=cfg.entity,
-            tags=cfg.tags,
+            project=cfg.wandb.project,
+            entity=cfg.wandb.entity,
+            tags=cfg.wandb.tags,
             job_type="train",
-            name=cfg.name,
+            name=cfg.wandb.name,
             mode="disabled" if cfg.debug else "run",
         ),
         checkpoint_callback=callbacks.ModelCheckpoint(
@@ -36,6 +36,7 @@ def main(cfg: DictConfig):
         precision=16 if cfg.fp16 else 32,
         # replace_sampler_ddp=not cfg.balance_dataset,
         # accelerator="ddp",
+        # TODO(frederik): implement balanced dataset
     )
     log.info("Checkpoint directory {}", trainer.checkpoint_callback.dirpath)
     trainer.fit(model)
