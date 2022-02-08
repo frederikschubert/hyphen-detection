@@ -1,4 +1,13 @@
 # Hyphen Detection
 
-Automating hyphen counts using EfficientNets.
+## Installation
 
+```bash
+conda env create -f environment.yaml
+```
+
+## Training
+
+```bash
+
+```

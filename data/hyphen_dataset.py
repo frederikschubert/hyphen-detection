@@ -1,33 +1,43 @@
 import csv
+import json
+import logging
 import os
-from typing import List, Literal, Tuple
+from typing import Callable, Literal, Optional
 
 import numpy as np
-from loguru import logger
 from PIL import Image
+from omegaconf import DictConfig
 from torch.utils.data import Dataset
 from tqdm import tqdm
+from data.prepare_dataset import prepare_dataset
 
-from common.utils import augment, read_patch
+from data.utils import read_patch
+
+log = logging.getLogger(__name__)
 
 
 class HyphenDataset(Dataset):
     def __init__(
         self,
-        path: str,
+        cfg: DictConfig,
         split: Literal["train", "val"] = "train",
-        patch_size: int = 80,
-        subsample: bool = False,
+        transform: Optional[Callable] = None,
     ):
-        self.file = os.path.join(path, split, "annotations.csv")
-        self.patch_size = patch_size
-        self._image_paths: List[str] = []
-        self._labels: List[int] = []
-        self._centers: List[Tuple[int, int]] = []
-        self.subsample = subsample
+        self.file = os.path.join(cfg.dataset.path, split, "annotations.csv")
+        if not os.path.exists(self.file):
+            prepare_dataset(cfg)
+        self.cfg = cfg
+        self.transform = transform
+
+        with open(os.path.join(cfg.dataset.path, "metadata.json"), "r") as f:
+            self.metadata = json.load(f)
+
+        self._image_paths = []
+        self._labels = []
+        self._centers = []
         with open(self.file, "r", newline="") as csvfile:
             reader = csv.DictReader(csvfile)
-            logger.info("Reading annotations...")
+            log.info("Reading annotations...")
             for row in tqdm(reader):
                 self._image_paths.append(row["image_path"])
                 self._labels.append(int(row["label"]))
@@ -39,9 +49,10 @@ class HyphenDataset(Dataset):
         self._labels = np.array(self._labels)
         self._centers = np.array(self._centers)
         self._image_paths = np.array(self._image_paths)
+
         self.class_sample_counts = np.unique(self._labels, return_counts=True)[1]
-        logger.info("Found the following class counts {}", self.class_sample_counts)
-        if self.subsample:
+        log.info("Found the following class counts {}", self.class_sample_counts)
+        if cfg.dataset.subsample:
             negative_indices = np.squeeze(np.argwhere(self._labels == 0))
             self.subsampled_indices = np.concatenate(
                 [
@@ -51,7 +62,7 @@ class HyphenDataset(Dataset):
                     np.squeeze(np.argwhere(self._labels == 1)),
                 ]
             )
-            logger.info("Subsampled dataset to size {}", len(self))
+            log.info("Subsampled dataset to size {}", len(self))
         else:
             self.weights = np.where(
                 self._labels == 0,
@@ -62,7 +73,7 @@ class HyphenDataset(Dataset):
                 * len(self._labels)
                 / self.class_sample_counts[1],
             )
-        logger.info("Loaded dataset")
+        log.info("Loaded dataset")
 
     def get_percentage_for_image(self, query_image_path: str):
         labels = self.get_labels_for_image(query_image_path)
@@ -84,27 +95,27 @@ class HyphenDataset(Dataset):
 
     @property
     def labels(self):
-        if self.subsample:
+        if self.cfg.dataset.subsample:
             return self._labels[self.subsampled_indices]
         else:
             return self._labels
 
     @property
     def image_paths(self):
-        if self.subsample:
+        if self.cfg.dataset.subsample:
             return self._image_paths[self.subsampled_indices]
         else:
             return self._image_paths
 
     @property
     def centers(self):
-        if self.subsample:
+        if self.cfg.dataset.subsample:
             return self._centers[self.subsampled_indices]
         else:
             return self._centers
 
     def __len__(self):
-        if self.subsample:
+        if self.cfg.dataset.subsample:
             return len(self.subsampled_indices)
         else:
             return len(self._image_paths)
@@ -112,7 +123,8 @@ class HyphenDataset(Dataset):
     def __getitem__(self, index):
         center = self.centers[index]
         image = Image.open(self.image_paths[index]).convert("RGB")
-        patch = read_patch(image, center, self.patch_size)
-        patch = augment(patch)
+        patch = read_patch(image, center, self.cfg.dataset.patch_size)
+        if self.transform:
+            patch = self.transform(patch)
         label = self.labels[index]
         return patch, label

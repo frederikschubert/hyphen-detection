@@ -1,0 +1,22 @@
+name: hyphen-detection
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pyvips
+  - pip
+  - pip:
+      - timm
+      - pytorch_lightning
+      - hydra-core
+      - hydra_colorlog
+      - wandb
+      - black
+      - debugpy
+      - pylint
+      - pytest
+      - matplotlib
+      - seaborn
+      - ipykernel
+      - opencv-python
