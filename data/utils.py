@@ -1,4 +1,5 @@
 from typing import Tuple
+
 import numpy as np
 import torch
 from torchvision.transforms.functional import to_tensor

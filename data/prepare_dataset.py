@@ -1,33 +1,27 @@
 import base64
-from copy import deepcopy
 import csv
 import io
 import json
 import logging
+import multiprocessing as mp
 import operator
-from pathlib import Path, PosixPath
+import os
 import random
 import shutil
-from typing import List, Tuple
-from xml.dom import minidom
-from matplotlib import pyplot as plt
-from omegaconf import DictConfig
-import multiprocessing as mp
-import os
-from tqdm import tqdm
-import os
+from copy import deepcopy
 from itertools import product
 from pathlib import Path, PosixPath
 from typing import List, Tuple
 from xml.dom import minidom
-from PIL import Image
 
 import cv2
 import numpy as np
 import pandas as pd
 import pyvips
+from matplotlib import pyplot as plt
+from omegaconf import DictConfig
+from PIL import Image
 from tqdm import tqdm
-
 
 log = logging.getLogger(__name__)
 

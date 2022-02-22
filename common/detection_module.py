@@ -1,17 +1,18 @@
 import os
 from typing import Tuple, cast
-from omegaconf import DictConfig
+
 import timm
 import timm.data
-import timm.utils
 import timm.loss
 import timm.optim
 import timm.scheduler
-from pytorch_lightning import LightningModule, Trainer
+import timm.utils
 import torch
 import torchmetrics
-from torch.utils.data import DataLoader
 from data.hyphen_dataset import HyphenDataset
+from omegaconf import DictConfig
+from pytorch_lightning import LightningModule, Trainer
+from torch.utils.data import DataLoader
 
 # Adapted from https://towardsdatascience.com/getting-started-with-pytorch-image-models-timm-a-practitioners-guide-4e77b4bf9055
 

@@ -1,0 +1,40 @@
+wandb:
+  project: hyphen-detection
+  entity: frederikschubert
+  tags: []
+  name: null
+
+debug: false
+fp16: true
+
+mixup_kwargs: {}
+train_loss_kwargs: {}
+ema_kwargs: {}
+optimizer_kwargs: {}
+scheduler_kwargs: {}
+
+model_name: efficientnet-b3a
+model_kwargs: {}
+num_classes: 2
+batch_size: 128
+epochs: 200
+
+dataset:
+  patch_size: 40
+  val_split: 0.2
+  input_dirs:
+    - Auszählung_1/CHILE
+    - Auszählung_1/Chile_New_Input_1
+    - Auszählung_1/ISRAEL
+    - Auszählung_1/Asendorf
+    - Chile_Input_2
+    - Chile_New_Input_2
+  grid_files:
+    - grid_20x17.csv
+    - grid_20x17.csv
+    - grid_20x17.csv
+    - grid_23x17.csv
+    - grid_20x17.csv
+    - grid_20x17.csv
+  input_dir_base: ./tmp/data
+  output_dir: ./tmp/data_processed
