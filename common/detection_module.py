@@ -2,6 +2,7 @@ import logging
 import os
 import random
 from typing import Any, List, Tuple, cast
+from numpy import average
 
 import timm
 import timm.data
@@ -19,23 +20,13 @@ from pytorch_lightning import LightningModule, Trainer
 from torch.utils.data import DataLoader
 from torchvision.utils import make_grid
 
+from pl_bolts.optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
+
 from old.common.utils import visualize_predictions
 
 # Adapted from https://towardsdatascience.com/getting-started-with-pytorch-image-models-timm-a-practitioners-guide-4e77b4bf9055
 
 log = logging.getLogger(__name__)
-
-
-class TimmCosineLRSchedulerScheduler(torch.optim.lr_scheduler.LambdaLR):
-    def __init__(self, optim, **kwargs):
-        self.init_lr = optim.param_groups[0]["lr"]
-        self.timmsteplr = timm.scheduler.CosineLRScheduler(optim, **kwargs)
-        super().__init__(optim, self)
-
-    def __call__(self, epoch):
-        desired_lr = self.timmsteplr.get_epoch_values(epoch)[0]
-        mult = desired_lr / self.init_lr
-        return mult
 
 
 class DetectionModule(LightningModule):
@@ -56,6 +47,8 @@ class DetectionModule(LightningModule):
             num_classes=cfg.num_classes, average="macro"
         )
         self.val_acc_best = torchmetrics.MaxMetric()
+        self.val_f1 = torchmetrics.F1Score(cfg.num_classes, average="macro")
+        self.val_mcc = torchmetrics.MatthewsCorrCoef(cfg.num_classes)
 
         self.dataset = HyphenDataset(
             cfg,
@@ -111,6 +104,22 @@ class DetectionModule(LightningModule):
         loss = self.val_loss_fn(logits, y)
         preds = torch.argmax(logits, dim=-1)
         acc = self.val_acc(preds, y)
+        self.val_f1.update(preds, y)
+        self.val_mcc.update(preds, y)
+        self.log(
+            "val/mcc",
+            self.val_mcc.compute(),
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+        )
+        self.log(
+            "val/f1",
+            self.val_f1.compute(),
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+        )
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
         self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
         return {"loss": loss}
@@ -137,7 +146,7 @@ class DetectionModule(LightningModule):
             self.model, **self.cfg.optimizer_kwargs
         )
 
-        scheduler = TimmCosineLRSchedulerScheduler(
+        scheduler = LinearWarmupCosineAnnealingLR(
             optimizer, **self.cfg.scheduler_kwargs
         )
         return [optimizer], [

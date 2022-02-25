@@ -20,13 +20,10 @@ optimizer_kwargs:
   lr: 1.0e-3
   weight_decay: 1.0e-3
 scheduler_kwargs:
-  t_initial: ${epochs}
-  cycle_decay: 0.5
-  lr_min: 1.0e-6
-  t_in_epochs: true
-  warmup_t: 3
-  warmup_lr_init: 1.0e-4
-  cycle_limit: 1
+  warmup_epochs: 1
+  max_epochs: ${epochs}
+  eta_min: 1.0e-6
+  warmup_start_lr: 1.0e-6
 
 model_name: efficientnet_b3a
 model_kwargs:

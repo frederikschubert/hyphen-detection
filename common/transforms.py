@@ -44,8 +44,6 @@ def transforms_train(
     )
 
     aug_norm = K.AugmentationSequential(
-        K.Normalize(mean, std),
-        data_keys=["input", "mask"],
-        keepdim=True
+        K.Normalize(mean, std), data_keys=["input", "mask"], keepdim=True
     )
     return aug, aug_norm
