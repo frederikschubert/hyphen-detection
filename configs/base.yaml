@@ -1,3 +1,8 @@
+defaults:
+  - override hydra/job_logging: colorlog
+  - override hydra/hydra_logging: colorlog
+  - _self_
+
 wandb:
   project: hyphen-detection
   entity: frederikschubert
@@ -7,20 +12,34 @@ wandb:
 debug: false
 fp16: true
 
-mixup_kwargs: {}
-train_loss_kwargs: {}
-ema_kwargs: {}
-optimizer_kwargs: {}
-scheduler_kwargs: {}
+train_loss_kwargs:
+  target_threshold: 0.2
+  smoothing: 0.1
+optimizer_kwargs:
+  opt: lookahead_AdamW
+  lr: 1.0e-3
+  weight_decay: 1.0e-3
+scheduler_kwargs:
+  t_initial: ${epochs}
+  cycle_decay: 0.5
+  lr_min: 1.0e-6
+  t_in_epochs: true
+  warmup_t: 3
+  warmup_lr_init: 1.0e-4
+  cycle_limit: 1
 
-model_name: efficientnet-b3a
-model_kwargs: {}
+model_name: efficientnet_b3a
+model_kwargs:
+  in_chans: 4
+  pretrained: true
 num_classes: 2
-batch_size: 128
-epochs: 200
+batch_size: 100
+epochs: 20
 
 dataset:
-  patch_size: 40
+  num_samples: 4
+  subsample: true
+  patch_size: 224
   val_split: 0.2
   input_dirs:
     - Auszählung_1/CHILE
@@ -36,5 +55,11 @@ dataset:
     - grid_23x17.csv
     - grid_20x17.csv
     - grid_20x17.csv
-  input_dir_base: ./tmp/data
-  output_dir: ./tmp/data_processed
+  input_dir_base: /home/schubert/projects/hyphen-detection/nobackup/data
+  output_dir: /home/schubert/projects/hyphen-detection/nobackup/data_processed
+
+hydra:
+  run:
+    dir: ./tmp/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ./tmp/${now:%Y-%m-%d}/${now:%H-%M-%S}

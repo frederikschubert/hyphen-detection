@@ -1,5 +1,7 @@
+import logging
 import os
-from typing import Tuple, cast
+import random
+from typing import Any, List, Tuple, cast
 
 import timm
 import timm.data
@@ -9,12 +11,31 @@ import timm.scheduler
 import timm.utils
 import torch
 import torchmetrics
+import wandb
+from common.transforms import transforms_train, transforms_val
 from data.hyphen_dataset import HyphenDataset
 from omegaconf import DictConfig
 from pytorch_lightning import LightningModule, Trainer
 from torch.utils.data import DataLoader
+from torchvision.utils import make_grid
+
+from old.common.utils import visualize_predictions
 
 # Adapted from https://towardsdatascience.com/getting-started-with-pytorch-image-models-timm-a-practitioners-guide-4e77b4bf9055
+
+log = logging.getLogger(__name__)
+
+
+class TimmCosineLRSchedulerScheduler(torch.optim.lr_scheduler.LambdaLR):
+    def __init__(self, optim, **kwargs):
+        self.init_lr = optim.param_groups[0]["lr"]
+        self.timmsteplr = timm.scheduler.CosineLRScheduler(optim, **kwargs)
+        super().__init__(optim, self)
+
+    def __call__(self, epoch):
+        desired_lr = self.timmsteplr.get_epoch_values(epoch)[0]
+        mult = desired_lr / self.init_lr
+        return mult
 
 
 class DetectionModule(LightningModule):
@@ -22,38 +43,29 @@ class DetectionModule(LightningModule):
         super().__init__()
         self.cfg = cfg
         self.save_hyperparameters(cfg)
-        self.mixup_fn = timm.data.Mixup(**cfg.mixup_kwargs)
         self.train_loss_fn = timm.loss.BinaryCrossEntropy(**cfg.train_loss_kwargs)
         self.val_loss_fn = torch.nn.CrossEntropyLoss()
 
         self.model = timm.create_model(
             cfg.model_name, num_classes=cfg.num_classes, **cfg.model_kwargs
         )
-        self.train_acc = torchmetrics.Accuracy(num_classes=cfg.num_classes)
-        self.val_acc = torchmetrics.Accuracy(num_classes=cfg.num_classes)
+        self.train_acc = torchmetrics.Accuracy(
+            num_classes=cfg.num_classes, average="macro"
+        )
+        self.val_acc = torchmetrics.Accuracy(
+            num_classes=cfg.num_classes, average="macro"
+        )
         self.val_acc_best = torchmetrics.MaxMetric()
-
-        self.ema_accuracy = torchmetrics.Accuracy(num_classes=cfg.num_classes)
 
         self.dataset = HyphenDataset(
             cfg,
             split="train",
-            transform=timm.data.create_transform(
-                input_size=cfg.dataset.patch_size,
-                is_training=True,
-                mean=[0.5, 0.5, 0.5],
-                std=[0.5, 0.5, 0.5],
-                auto_augment="rand-m7-mstd0.5-inc1",
-            ),
+            transforms=transforms_train(),
         )
         self.val_dataset = HyphenDataset(
             cfg,
             split="val",
-            transform=timm.data.create_transform(
-                input_size=cfg.dataset.patch_size,
-                mean=[0.5, 0.5, 0.5],
-                std=[0.5, 0.5, 0.5],
-            ),
+            transforms=transforms_val(),
         )
 
     def forward(self, x: torch.Tensor):
@@ -61,16 +73,39 @@ class DetectionModule(LightningModule):
 
     def training_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int):
         x, y = batch
-        mixup_x, mixup_y = self.mixup_fn(x, y)
-        logits = self.forward(mixup_x)
-        loss = self.train_loss_fn(logits, mixup_y)
+        if batch_idx == 0:
+            self.logger.experiment.log(
+                {
+                    "sample_input_batch": wandb.Image(make_grid(x[:, 1:])),
+                    "sample_masks": wandb.Image(make_grid(x[:, 0].unsqueeze(1))),
+                },
+                commit=False,
+            )
+        if batch_idx % 100 == 0:
+            image_paths = random.choices(
+                self.val_dataset._image_paths, k=self.cfg.dataset.num_samples
+            )
+            for i, image_path in enumerate(image_paths):
+                image = visualize_predictions(
+                    self,
+                    image_path,
+                    centers=self.val_dataset.get_centers_for_image(image_path),
+                    labels=self.val_dataset.get_labels_for_image(image_path),
+                    patch_size=self.cfg.dataset.patch_size,
+                )
+                self.logger.experiment.log(
+                    {f"sample_{i}": wandb.Image(image, caption=image_path)},
+                    commit=False,
+                )
+        logits = self.forward(x)
+        loss = self.train_loss_fn(logits, y)
         preds = torch.argmax(logits, dim=-1)
         acc = self.train_acc(preds, y)
-        self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
-        self.log("train/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=False)
+        self.log("train/acc", acc, on_step=True, on_epoch=True, prog_bar=True)
         return {"loss": loss}
 
-    def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor]):
+    def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int):
         x, y = batch
         logits = self.forward(x)
         loss = self.val_loss_fn(logits, y)
@@ -78,17 +113,12 @@ class DetectionModule(LightningModule):
         acc = self.val_acc(preds, y)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
         self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
-
-        ema_preds = self.ema_model(x).argmax(dim=-1)
-        self.ema_accuracy.update(ema_preds, y)
         return {"loss": loss}
 
     def on_train_epoch_end(self) -> None:
-        self.ema_model.update(self.model)
-        self.ema_model.eval()
-
-        if hasattr(self.optimizer, "sync_lookahead"):
-            cast(timm.optim.lookahead.Lookahead, self.optimizer).sync_lookahead()
+        optimizer = self.optimizers()
+        if hasattr(optimizer, "sync_lookahead"):
+            cast(timm.optim.lookahead.Lookahead, optimizer).sync_lookahead()
 
     def validation_epoch_end(self, outputs):
         acc = self.val_acc.compute()
@@ -99,7 +129,6 @@ class DetectionModule(LightningModule):
 
     def on_train_start(self) -> None:
         trainer: Trainer = self.trainer
-        self.ema_model = timm.utils.ModelEmaV2(self.model, **self.cfg.ema_kwargs)
         if trainer.num_gpus > 1:
             self.model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(self.model)
 
@@ -107,11 +136,12 @@ class DetectionModule(LightningModule):
         optimizer = timm.optim.create_optimizer_v2(
             self.model, **self.cfg.optimizer_kwargs
         )
-        scheduler = timm.scheduler.CosineLRScheduler(
+
+        scheduler = TimmCosineLRSchedulerScheduler(
             optimizer, **self.cfg.scheduler_kwargs
         )
         return [optimizer], [
-            {"scheduler": scheduler, "interval": "epoch", "frequency": 1}
+            {"scheduler": scheduler, "interval": "step", "frequency": 1}
         ]
 
     def train_dataloader(self):
@@ -134,4 +164,3 @@ class DetectionModule(LightningModule):
     def on_epoch_end(self):
         self.train_acc.reset()
         self.val_acc.reset()
-        self.ema_accuracy.reset()

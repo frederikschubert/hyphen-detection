@@ -2,11 +2,12 @@ import csv
 import json
 import logging
 import os
-from typing import Callable, Literal, Optional
+from typing import Callable, Iterable, List, Literal, Optional
 
 import numpy as np
 from omegaconf import DictConfig
 from PIL import Image
+import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
@@ -21,15 +22,15 @@ class HyphenDataset(Dataset):
         self,
         cfg: DictConfig,
         split: Literal["train", "val"] = "train",
-        transform: Optional[Callable] = None,
+        transforms: Iterable[Optional[Callable]] = [],
     ):
-        self.file = os.path.join(cfg.dataset.path, split, "annotations.csv")
+        self.file = os.path.join(cfg.dataset.output_dir, split, "annotations.csv")
         if not os.path.exists(self.file):
             prepare_dataset(cfg)
         self.cfg = cfg
-        self.transform = transform
+        self.transforms = transforms
 
-        with open(os.path.join(cfg.dataset.path, "metadata.json"), "r") as f:
+        with open(os.path.join(cfg.dataset.output_dir, "metadata.json"), "r") as f:
             self.metadata = json.load(f)
 
         self._image_paths = []
@@ -51,7 +52,7 @@ class HyphenDataset(Dataset):
         self._image_paths = np.array(self._image_paths)
 
         self.class_sample_counts = np.unique(self._labels, return_counts=True)[1]
-        log.info("Found the following class counts {}", self.class_sample_counts)
+        log.info(f"Found the following class counts {self.class_sample_counts}")
         if cfg.dataset.subsample:
             negative_indices = np.squeeze(np.argwhere(self._labels == 0))
             self.subsampled_indices = np.concatenate(
@@ -62,7 +63,7 @@ class HyphenDataset(Dataset):
                     np.squeeze(np.argwhere(self._labels == 1)),
                 ]
             )
-            log.info("Subsampled dataset to size {}", len(self))
+            log.info(f"Subsampled dataset to size {len(self)}")
         else:
             self.weights = np.where(
                 self._labels == 0,
@@ -123,8 +124,9 @@ class HyphenDataset(Dataset):
     def __getitem__(self, index):
         center = self.centers[index]
         image = Image.open(self.image_paths[index]).convert("RGB")
-        patch = read_patch(image, center, self.cfg.dataset.patch_size)
-        if self.transform:
-            patch = self.transform(patch)
+        patch, center_mask = read_patch(image, center, self.cfg.dataset.patch_size)
+        for transform in self.transforms:
+            if transform:
+                patch, center_mask = transform(patch, center_mask)
         label = self.labels[index]
-        return patch, label
+        return torch.cat([center_mask, patch]), label

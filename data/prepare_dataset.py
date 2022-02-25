@@ -130,107 +130,107 @@ def get_image(image_el, size):
 
 def extract_points_and_images(data: Tuple[PosixPath, str, Tuple[int, int]]):
     file, grid, size = data
-    # logger.info("Processing file {}", str(file))
-    if "Asendorf" in str(file):
-        doc = minidom.parse(str(file))
-        points_el = doc.getElementsByTagName("circle") + doc.getElementsByTagName(
-            "ellipse"
-        )
-        image_el = doc.getElementsByTagName("image")[0]
-        centers = get_centers(grid)
-        labels = get_labels(centers, points_el)
-        if labels is None:
-            log.warning("Could not extract labels for file {}", file)
-            return None
-        image = get_image(image_el, size)
-        image = np.array(image)
-    else:
-        doc_image = minidom.parse(str(file))
-        doc_points = minidom.parse(str(file))
-
-        images_el = doc_points.getElementsByTagName("image")
-        for image_el in images_el:
-            image_el.parentNode.removeChild(image_el)
-            image_x, image_y = float(image_el.getAttribute("x")), float(
-                image_el.getAttribute("y")
+    try:
+        log.debug(f"Processing file {file}")
+        if "Asendorf" in str(file):
+            doc = minidom.parse(str(file))
+            points_el = doc.getElementsByTagName("circle") + doc.getElementsByTagName(
+                "ellipse"
             )
-        points_el = doc_points.getElementsByTagName(
-            "circle"
-        ) + doc_image.getElementsByTagName("ellipse")
-
-        x, y = [], []
-        for point_el in points_el:
-            point_el.setAttribute(
-                "cx", str(float(point_el.getAttribute("cx")) - image_x)
-            )
-            point_el.setAttribute(
-                "cy", str(float(point_el.getAttribute("cy")) - image_y)
-            )
-            x.append(float(point_el.getAttribute("cx")))
-            y.append(float(point_el.getAttribute("cy")))
-        x, y = np.unique(x), np.unique(y)
-        points_svg = doc_points.toxml()
-
-        points_el = doc_image.getElementsByTagName(
-            "circle"
-        ) + doc_image.getElementsByTagName("ellipse")
-        for point_el in points_el:
-            point_el.parentNode.removeChild(point_el)
-        images_el = doc_image.getElementsByTagName("image")
-        for image_el in images_el:
-            image_el.setAttribute("x", str(0))
-            image_el.setAttribute("y", str(0))
-
-        image_svg = doc_image.toxml()
-
-        with open("./data/image.svg", "w") as f:
-            f.write(image_svg)
-
-        with open("./data/points.svg", "w") as f:
-            f.write(points_svg)
-
-        image = pyvips.Image.new_from_buffer(image_svg.encode("utf-8"), "", dpi=96)
-        points = pyvips.Image.new_from_buffer(points_svg.encode("utf-8"), "", dpi=96)
-        bbox = image.find_trim()
-        if len(bbox) != 4 or bbox[-1] == 0 or bbox[-2] == 0:
-            log.warning("File {} did not contain correct data", str(file))
-            return None
-        image = image.crop(*bbox)
-        points = points.crop(*bbox)
-        image = np.ndarray(
-            buffer=image.write_to_memory(),
-            shape=[image.height, image.width, image.bands],
-            dtype=np.uint8,
-        )
-        points = np.ndarray(
-            buffer=points.write_to_memory(),
-            shape=[points.height, points.width, points.bands],
-            dtype=np.uint8,
-        )
-        image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
-        points = cv2.cvtColor(points, cv2.COLOR_RGBA2RGB)
-
-        coordinates = pd.read_csv(grid)
-        x, y = coordinates["x"], coordinates["y"]
-        circles = list(product(y, x))
-        circles = [
-            (int(circle[0]), int(circle[1]))
-            for circle in circles
-            if not np.isnan(circle[0]) and not np.isnan(circle[1])
-        ]
-        centers = []
-        labels = []
-        if circles:
-            for y, x in circles:
-                is_positive = (
-                    (points[y : y + 9, x : x + 9] == np.array([255, 0, 0]))
-                    .all(axis=-1)
-                    .any()
-                )
-                labels.append(1 if is_positive else 0)
-                centers.append((x, y))
+            image_el = doc.getElementsByTagName("image")[0]
+            centers = get_centers(grid)
+            labels = get_labels(centers, points_el)
+            if labels is None:
+                log.warning(f"Could not extract labels for file {file}")
+                return None
+            image = get_image(image_el, size)
+            image = np.array(image)
         else:
-            log.warning("Did not find circle grid")
+            doc_image = minidom.parse(str(file))
+            doc_points = minidom.parse(str(file))
+
+            images_el = doc_points.getElementsByTagName("image")
+            for image_el in images_el:
+                image_el.parentNode.removeChild(image_el)
+                image_x, image_y = float(image_el.getAttribute("x")), float(
+                    image_el.getAttribute("y")
+                )
+            points_el = doc_points.getElementsByTagName(
+                "circle"
+            ) + doc_image.getElementsByTagName("ellipse")
+
+            x, y = [], []
+            for point_el in points_el:
+                point_el.setAttribute(
+                    "cx", str(float(point_el.getAttribute("cx")) - image_x)
+                )
+                point_el.setAttribute(
+                    "cy", str(float(point_el.getAttribute("cy")) - image_y)
+                )
+                x.append(float(point_el.getAttribute("cx")))
+                y.append(float(point_el.getAttribute("cy")))
+            x, y = np.unique(x), np.unique(y)
+            points_svg = doc_points.toxml()
+
+            points_el = doc_image.getElementsByTagName(
+                "circle"
+            ) + doc_image.getElementsByTagName("ellipse")
+            for point_el in points_el:
+                point_el.parentNode.removeChild(point_el)
+            images_el = doc_image.getElementsByTagName("image")
+            for image_el in images_el:
+                image_el.setAttribute("x", str(0))
+                image_el.setAttribute("y", str(0))
+
+            image_svg = doc_image.toxml()
+
+            image = pyvips.Image.new_from_buffer(image_svg.encode("utf-8"), "", dpi=96)
+            points = pyvips.Image.new_from_buffer(
+                points_svg.encode("utf-8"), "", dpi=96
+            )
+            bbox = image.find_trim()
+            if len(bbox) != 4 or bbox[-1] == 0 or bbox[-2] == 0:
+                log.warning(f"File {file} did not contain correct data")
+                return None
+            image = image.crop(*bbox)
+            points = points.crop(*bbox)
+            image = np.ndarray(
+                buffer=image.write_to_memory(),
+                shape=[image.height, image.width, image.bands],
+                dtype=np.uint8,
+            )
+            points = np.ndarray(
+                buffer=points.write_to_memory(),
+                shape=[points.height, points.width, points.bands],
+                dtype=np.uint8,
+            )
+            image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
+            points = cv2.cvtColor(points, cv2.COLOR_RGBA2RGB)
+
+            coordinates = pd.read_csv(grid)
+            x, y = coordinates["x"], coordinates["y"]
+            circles = list(product(y, x))
+            circles = [
+                (int(circle[0]), int(circle[1]))
+                for circle in circles
+                if not np.isnan(circle[0]) and not np.isnan(circle[1])
+            ]
+            centers = []
+            labels = []
+            if circles:
+                for y, x in circles:
+                    is_positive = (
+                        (points[y : y + 9, x : x + 9] == np.array([255, 0, 0]))
+                        .all(axis=-1)
+                        .any()
+                    )
+                    labels.append(1 if is_positive else 0)
+                    centers.append((x, y))
+            else:
+                log.warning("Did not find circle grid")
+    except:
+        log.error(f"File {file} did not contain correct data")
+        return None
 
     return (
         image,
@@ -244,21 +244,22 @@ def prepare_dataset(cfg: DictConfig):
     grid_files = []
     sizes = []
     for directory, grid in zip(cfg.dataset.input_dirs, cfg.dataset.grid_files):
-        files = list(Path(directory).glob("**/*aster/*.svg"))
+        base_path = Path(cfg.dataset.input_dir_base)
+        files = list(base_path.joinpath(directory).glob("**/*aster/*.svg"))
         svg_files.extend(files)
-        grid_files.extend([grid] * len(files))
+        grid_files.extend([base_path.joinpath(grid)] * len(files))
         if "Asendorf" in directory:
             size = (1024, 768)
         else:
             size = (780, 660)
         sizes.extend([size] * len(files))
-    log.info("Found {} svg files", len(svg_files))
+    log.info(f"Found {len(svg_files)} svg files")
     images, center_lists, label_lists = zip(
         *imap_progress(
             extract_points_and_images, list(zip(svg_files, grid_files, sizes))
         )
     )
-    log.info("Extracted {} images", len(images))
+    log.info(f"Extracted {len(images)} images")
     if os.path.exists(cfg.dataset.output_dir):
         shutil.rmtree(cfg.dataset.output_dir)
     train_output_dir = os.path.join(cfg.dataset.output_dir, "train")
@@ -310,7 +311,7 @@ def prepare_dataset(cfg: DictConfig):
                 )
                 output_path_image = output_path_image.replace(".svg", ".png")
                 os.makedirs(os.path.dirname(output_path_image), exist_ok=True)
-                log.debug("Writing image to {}", output_path_image)
+                log.debug(f"Writing image to {output_path_image}")
                 plt.imsave(output_path_image, img)
                 for center, label in zip(centers, labels):
                     writer.writerow(

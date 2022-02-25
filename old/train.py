@@ -78,7 +78,9 @@ class HyphenDetection(pl.LightningModule):
             in_chans=4,
         )
         self.train_dataset = HyphenDataset(
-            self.params.dataset, patch_size=self.params.patch_size, subsample=self.params.subsample,
+            self.params.dataset,
+            patch_size=self.params.patch_size,
+            subsample=self.params.subsample,
         )
         self.val_dataset = HyphenDataset(
             self.params.dataset, split="val", patch_size=self.params.patch_size
@@ -118,7 +120,7 @@ class HyphenDetection(pl.LightningModule):
                     image_path,
                     centers=self.val_dataset.get_centers_for_image(image_path),
                     labels=self.val_dataset.get_labels_for_image(image_path),
-                    patch_size=self.params.patch_size,
+                    patch_size=self.cfg.dataset.patch_size,
                 )
                 self.logger.experiment.log(
                     {f"sample_{i}": wandb.Image(image, caption=image_path)},
