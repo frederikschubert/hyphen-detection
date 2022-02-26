@@ -3,7 +3,6 @@ import json
 import logging
 import os
 from typing import Callable, Iterable, List, Literal, Optional
-import kornia
 
 import numpy as np
 from omegaconf import DictConfig

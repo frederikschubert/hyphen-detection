@@ -1,8 +1,7 @@
 import logging
 import os
 import random
-from typing import Any, List, Tuple, cast
-from numpy import average
+from typing import Tuple, cast
 
 import timm
 import timm.data
@@ -13,16 +12,15 @@ import timm.utils
 import torch
 import torchmetrics
 import wandb
-from common.transforms import transforms_train, transforms_val
 from data.hyphen_dataset import HyphenDataset
+from old.common.utils import visualize_predictions
 from omegaconf import DictConfig
+from pl_bolts.optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
 from pytorch_lightning import LightningModule, Trainer
 from torch.utils.data import DataLoader
 from torchvision.utils import make_grid
 
-from pl_bolts.optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
-
-from old.common.utils import visualize_predictions
+from common.transforms import transforms_train, transforms_val
 
 # Adapted from https://towardsdatascience.com/getting-started-with-pytorch-image-models-timm-a-practitioners-guide-4e77b4bf9055
 

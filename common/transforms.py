@@ -1,5 +1,3 @@
-import torch
-from torchvision import transforms
 import kornia.augmentation as K
 
 
@@ -27,10 +25,9 @@ def transforms_train(
         K.RandomBoxBlur(),
         K.RandomElasticTransform(),
         K.RandomGrayscale(),
-        K.RandomGaussianNoise(),
         K.RandomHorizontalFlip(),
         K.RandomPosterize(),
-        K.RandomAffine(180),
+        K.RandomAffine(360),
         K.RandomSharpness(),
         K.RandomSolarize(),
         K.RandomVerticalFlip(),
@@ -39,7 +36,7 @@ def transforms_train(
             "mask",
         ],
         same_on_batch=False,
-        random_apply=(2, 5),
+        random_apply=(3, 8),
         keepdim=True,
     )
 

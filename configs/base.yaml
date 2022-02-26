@@ -20,8 +20,8 @@ optimizer_kwargs:
   lr: 1.0e-3
   weight_decay: 1.0e-3
 scheduler_kwargs:
-  warmup_epochs: 1
-  max_epochs: ${epochs}
+  warmup_epochs: 438
+  max_epochs: 8760
   eta_min: 1.0e-6
   warmup_start_lr: 1.0e-6
 
