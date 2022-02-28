@@ -28,6 +28,7 @@ class HyphenDataset(Dataset):
         if not os.path.exists(self.file):
             prepare_dataset(cfg)
         self.cfg = cfg
+        self.split = split
         self.transforms = transforms
 
         with open(os.path.join(cfg.dataset.output_dir, "metadata.json"), "r") as f:
@@ -53,7 +54,7 @@ class HyphenDataset(Dataset):
 
         self.class_sample_counts = np.unique(self._labels, return_counts=True)[1]
         log.info(f"Found the following class counts {self.class_sample_counts}")
-        if cfg.dataset.subsample:
+        if self.subsample:
             negative_indices = np.squeeze(np.argwhere(self._labels == 0))
             self.subsampled_indices = np.concatenate(
                 [
@@ -93,30 +94,34 @@ class HyphenDataset(Dataset):
             for label, image_path in zip(self._labels, self._image_paths)
             if query_image_path in image_path
         ]
+    
+    @property
+    def subsample(self):
+        return self.cfg.dataset.subsample and not self.split == "val"
 
     @property
     def labels(self):
-        if self.cfg.dataset.subsample:
+        if self.subsample:
             return self._labels[self.subsampled_indices]
         else:
             return self._labels
 
     @property
     def image_paths(self):
-        if self.cfg.dataset.subsample:
+        if self.subsample:
             return self._image_paths[self.subsampled_indices]
         else:
             return self._image_paths
 
     @property
     def centers(self):
-        if self.cfg.dataset.subsample:
+        if self.subsample:
             return self._centers[self.subsampled_indices]
         else:
             return self._centers
 
     def __len__(self):
-        if self.cfg.dataset.subsample:
+        if self.subsample:
             return len(self.subsampled_indices)
         else:
             return len(self._image_paths)

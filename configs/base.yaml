@@ -31,7 +31,7 @@ model_kwargs:
   pretrained: true
 num_classes: 2
 batch_size: 100
-epochs: 20
+epochs: 25
 
 dataset:
   num_samples: 4

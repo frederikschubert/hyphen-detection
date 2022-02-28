@@ -101,7 +101,7 @@ class DetectionModule(LightningModule):
         logits = self.forward(x)
         loss = self.val_loss_fn(logits, y)
         preds = torch.argmax(logits, dim=-1)
-        acc = self.val_acc(preds, y)
+        self.val_acc.update(preds, y)
         self.val_f1.update(preds, y)
         self.val_mcc.update(preds, y)
         self.log(
@@ -119,7 +119,13 @@ class DetectionModule(LightningModule):
             prog_bar=False,
         )
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
-        self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(
+            "val/acc",
+            self.val_acc.compute(),
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+        )
         return {"loss": loss}
 
     def on_train_epoch_end(self) -> None:
@@ -155,7 +161,7 @@ class DetectionModule(LightningModule):
         return DataLoader(
             self.dataset,
             batch_size=self.cfg.batch_size,
-            num_workers=os.cpu_count() or 1,
+            num_workers=16,
             shuffle=True,
             pin_memory=True,
         )
@@ -164,7 +170,7 @@ class DetectionModule(LightningModule):
         return DataLoader(
             self.val_dataset,
             batch_size=self.cfg.batch_size,
-            num_workers=os.cpu_count() or 1,
+            num_workers=16,
             pin_memory=True,
         )
 
