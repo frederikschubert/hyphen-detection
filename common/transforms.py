@@ -21,13 +21,18 @@ def transforms_train(
     std=0.5,
 ):
     aug = K.AugmentationSequential(
-        K.ColorJitter(),
+        K.ColorJitter(0.4, 0.4, 0.4, 0.4),
         K.RandomBoxBlur(),
         K.RandomElasticTransform(),
         K.RandomGrayscale(),
         K.RandomHorizontalFlip(),
         K.RandomPosterize(),
-        K.RandomAffine(360),
+        K.RandomAffine(
+            degrees=360,
+            translate=(0.2, 0.2),
+            scale=(0.8, 0.9),
+            padding_mode="reflection",
+        ),
         K.RandomSharpness(),
         K.RandomSolarize(),
         K.RandomVerticalFlip(),

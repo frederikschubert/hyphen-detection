@@ -20,8 +20,8 @@ optimizer_kwargs:
   lr: 1.0e-3
   weight_decay: 1.0e-3
 scheduler_kwargs:
-  warmup_epochs: 438
-  max_epochs: 8760
+  warmup_epochs: 24094
+  max_epochs: 250000
   eta_min: 1.0e-6
   warmup_start_lr: 1.0e-6
 
@@ -35,7 +35,8 @@ epochs: 25
 
 dataset:
   num_samples: 4
-  subsample: true
+  subsample: false
+  balance: true
   patch_size: 224
   val_split: 0.2
   input_dirs:

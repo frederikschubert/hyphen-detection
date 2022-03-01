@@ -7,6 +7,7 @@ import pytorch_lightning.loggers as loggers
 from omegaconf import DictConfig
 from pytorch_lightning import Trainer
 from tqdm.contrib.logging import logging_redirect_tqdm
+import wandb
 from common.detection_module import DetectionModule
 
 log = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ def main(cfg: DictConfig):
             name=cfg.wandb.name,
             mode="disabled" if cfg.debug else "run",
             save_dir=os.getcwd(),
+            settings=wandb.Settings(start_method="thread"),
         )
         checkpoint_callback = callbacks.ModelCheckpoint(
             dirpath=os.getcwd(),

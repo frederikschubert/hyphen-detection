@@ -13,14 +13,15 @@ import torch
 import torchmetrics
 import wandb
 from data.hyphen_dataset import HyphenDataset
-from old.common.utils import visualize_predictions
 from omegaconf import DictConfig
 from pl_bolts.optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
 from pytorch_lightning import LightningModule, Trainer
 from torch.utils.data import DataLoader
+from torch.utils.data.sampler import WeightedRandomSampler
 from torchvision.utils import make_grid
 
 from common.transforms import transforms_train, transforms_val
+from data.utils import visualize_predictions
 
 # Adapted from https://towardsdatascience.com/getting-started-with-pytorch-image-models-timm-a-practitioners-guide-4e77b4bf9055
 
@@ -162,8 +163,14 @@ class DetectionModule(LightningModule):
             self.dataset,
             batch_size=self.cfg.batch_size,
             num_workers=16,
-            shuffle=True,
+            shuffle=not self.cfg.dataset.balance,
             pin_memory=True,
+            sampler=WeightedRandomSampler(
+                self.dataset.weights,
+                len(self.dataset),
+            )
+            if self.cfg.dataset.balance
+            else None,
         )
 
     def val_dataloader(self):
