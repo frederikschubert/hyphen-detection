@@ -128,10 +128,19 @@ class HyphenDataset(Dataset):
 
     def __getitem__(self, index):
         center = self.centers[index]
-        image = Image.open(self.image_paths[index]).convert("RGB")
-        patch, center_mask = read_patch(image, center, self.cfg.dataset.patch_size)
-        for transform in self.transforms:
-            if transform:
-                patch, center_mask = transform(patch, center_mask)
-        label = self.labels[index]
-        return torch.cat([center_mask, patch]), label
+        data = None
+        label = None
+        while data is None:
+            try:
+                image = Image.open(self.image_paths[index]).convert("RGB")
+                patch, center_mask = read_patch(image, center, self.cfg.dataset.patch_size)
+                for transform in self.transforms:
+                    if transform:
+                        patch, center_mask = transform(patch, center_mask)
+                label = self.labels[index]
+                data = torch.cat([center_mask, patch])
+            except:
+                continue
+        assert data is not None
+        assert label is not None
+        return data, label

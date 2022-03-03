@@ -38,8 +38,7 @@ def main(cfg: DictConfig):
             gpus=1,
             max_epochs=cfg.epochs,
             logger=logger,
-            enable_checkpointing=checkpoint_callback,
-            callbacks=[callbacks.LearningRateMonitor(logging_interval="step")],
+            callbacks=[checkpoint_callback, callbacks.LearningRateMonitor(logging_interval="step")],
             fast_dev_run=cfg.debug,
             precision=16 if cfg.fp16 else 32,
         )
